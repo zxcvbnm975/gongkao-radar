@@ -100,7 +100,7 @@ npx wrangler pages dev public --port 3000
 
 首次打开网页时，如果系统还没有完成过真实采集，Worker 会自动启动一次轻量来源检测：只读取列表页、单次快速探测并尽快生成状态；每日定时任务再执行失败重试并提取最新公告详情。网页“官方来源”区域会显示每个来源的当前状态：检测中、正常、暂无新公告、访问失败或动态平台官方入口。
 
-`GET /api/stats` 会返回 `collecting`、`refreshStartedAt`、`refreshFinishedAt` 和 `lastReport`。系统使用采集租约避免定时任务、首次检测和手工刷新重复运行；单个来源失败不会中断其他来源，失败来源会在下次定时任务中重新检测。
+`GET /api/stats` 会返回 `collecting`、`refreshStartedAt`、`refreshFinishedAt` 和 `lastReport`。首次检测通过 Durable Object 后台闹钟独立执行，不依赖网页请求保持连接；系统使用采集租约避免定时任务、首次检测和手工刷新重复运行。单个来源失败不会中断其他来源，失败来源会在下次定时任务中重新检测。
 
 国家电网和烟草招聘平台属于动态招聘系统，当前显示并核验官方入口，不把它们误报为可自动解析的静态公告来源。
 

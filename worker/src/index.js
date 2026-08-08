@@ -620,11 +620,7 @@ async function acquireRefreshLease(env) {
   return response.json();
 }
 
-async function refreshAll(env, { lease: existingLease = null, lightweight = false } = {}) {
-  await ensureSeeded(env);
-  const lease = existingLease?.granted ? existingLease : await acquireRefreshLease(env);
-  if (!lease.granted) return { ok: true, skipped: true, reason: "已有采集任务正在运行" };
-
+async function collectAllSources({ lightweight = false } = {}) {
   const reportById = new Map();
   const collected = [];
   const automaticSources = SOURCES.filter((source) => source.mode !== "portal");
@@ -685,6 +681,15 @@ async function refreshAll(env, { lease: existingLease = null, lightweight = fals
   }
 
   const report = SOURCES.map((source) => reportById.get(source.id));
+  return { collected, report };
+}
+
+async function refreshAll(env, { lease: existingLease = null, lightweight = false } = {}) {
+  await ensureSeeded(env);
+  const lease = existingLease?.granted ? existingLease : await acquireRefreshLease(env);
+  if (!lease.granted) return { ok: true, skipped: true, reason: "已有采集任务正在运行" };
+
+  const { collected, report } = await collectAllSources({ lightweight });
   const syncedAt = new Date().toISOString();
   const response = await getStore(env).fetch("https://store.internal/ingest", {
     method: "POST",
@@ -737,11 +742,11 @@ export default {
       const response = await getStore(env).fetch("https://store.internal/stats");
       const stats = await response.json();
       if (!stats.syncedAt && !stats.collecting) {
-        const lease = await acquireRefreshLease(env);
-        if (lease.granted) {
+        const scheduledResponse = await getStore(env).fetch("https://store.internal/schedule-refresh", { method: "POST" });
+        const scheduled = await scheduledResponse.json();
+        if (scheduled.granted) {
           stats.collecting = true;
-          stats.refreshStartedAt = lease.startedAt;
-          ctx.waitUntil(refreshAll(env, { lease, lightweight: true }));
+          stats.refreshStartedAt = scheduled.startedAt;
         }
       }
       return json(stats, { headers: { "Cache-Control": "no-store" } }, request, env);
@@ -890,6 +895,17 @@ export class NewsStore {
     return changed;
   }
 
+  async alarm() {
+    const startedAt = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray()[0]?.value || new Date().toISOString();
+    const { collected, report } = await collectAllSources({ lightweight: true });
+    const syncedAt = new Date().toISOString();
+    this.upsert(collected);
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('synced_at', ?)", syncedAt);
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('last_report', ?)", JSON.stringify(report));
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", startedAt);
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", syncedAt);
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
 
@@ -921,6 +937,20 @@ export class NewsStore {
       if (collecting) return Response.json({ granted: false, startedAt: started });
       const nextStartedAt = new Date(now).toISOString();
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", nextStartedAt);
+      return Response.json({ granted: true, startedAt: nextStartedAt });
+    }
+
+    if (url.pathname === "/schedule-refresh" && request.method === "POST") {
+      const now = Date.now();
+      const started = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray()[0]?.value || null;
+      const finished = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_finished_at'").toArray()[0]?.value || null;
+      const startedAt = started ? new Date(started).getTime() : 0;
+      const finishedAt = finished ? new Date(finished).getTime() : 0;
+      const collecting = startedAt > finishedAt && now - startedAt < REFRESH_LEASE_MS;
+      if (collecting) return Response.json({ granted: false, startedAt: started });
+      const nextStartedAt = new Date(now).toISOString();
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", nextStartedAt);
+      await this.ctx.storage.setAlarm(now + 100);
       return Response.json({ granted: true, startedAt: nextStartedAt });
     }
 
