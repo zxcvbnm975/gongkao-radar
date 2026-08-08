@@ -139,7 +139,9 @@ const FOCUS_CITIES = ["金昌市", "武威市", "张掖市"];
 const MAX_ITEMS_PER_SOURCE = 5;
 const MAX_DETAIL_PAGES_PER_SOURCE = 1;
 const SOURCE_BATCH_SIZE = 4;
-const REFRESH_LEASE_MS = 15 * 60 * 1000;
+const INITIAL_SOURCE_BATCH_SIZE = 6;
+const INITIAL_SOURCE_TIMEOUT_MS = 4000;
+const REFRESH_LEASE_MS = 3 * 60 * 1000;
 const SEED_VERSION = "4";
 
 const SEED_ITEMS = [
@@ -582,12 +584,12 @@ async function enrichItem(item) {
   }
 }
 
-async function collectSource(source) {
-  const html = await fetchText(source.url);
+async function collectSource(source, { lightweight = false } = {}) {
+  const html = await fetchText(source.url, lightweight ? INITIAL_SOURCE_TIMEOUT_MS : 12000);
   const candidates = parseListing(html, source);
   const links = candidates.slice(0, MAX_ITEMS_PER_SOURCE);
   const output = await Promise.all(links.map(async (item, index) => {
-    if (index < MAX_DETAIL_PAGES_PER_SOURCE) return enrichItem(item);
+    if (!lightweight && index < MAX_DETAIL_PAGES_PER_SOURCE) return enrichItem(item);
     return {
       ...item,
       id: await hash(item.articleUrl),
@@ -618,7 +620,7 @@ async function acquireRefreshLease(env) {
   return response.json();
 }
 
-async function refreshAll(env, { lease: existingLease = null } = {}) {
+async function refreshAll(env, { lease: existingLease = null, lightweight = false } = {}) {
   await ensureSeeded(env);
   const lease = existingLease?.granted ? existingLease : await acquireRefreshLease(env);
   if (!lease.granted) return { ok: true, skipped: true, reason: "已有采集任务正在运行" };
@@ -626,12 +628,13 @@ async function refreshAll(env, { lease: existingLease = null } = {}) {
   const reportById = new Map();
   const collected = [];
   const automaticSources = SOURCES.filter((source) => source.mode !== "portal");
-  for (let index = 0; index < automaticSources.length; index += SOURCE_BATCH_SIZE) {
-    const batch = automaticSources.slice(index, index + SOURCE_BATCH_SIZE);
+  const batchSize = lightweight ? INITIAL_SOURCE_BATCH_SIZE : SOURCE_BATCH_SIZE;
+  for (let index = 0; index < automaticSources.length; index += batchSize) {
+    const batch = automaticSources.slice(index, index + batchSize);
     const batchResults = await Promise.all(batch.map(async (source) => {
       const started = Date.now();
       try {
-        const result = await collectSource(source);
+        const result = await collectSource(source, { lightweight });
         return {
           source,
           items: result.items,
@@ -738,7 +741,7 @@ export default {
         if (lease.granted) {
           stats.collecting = true;
           stats.refreshStartedAt = lease.startedAt;
-          ctx.waitUntil(refreshAll(env, { lease }));
+          ctx.waitUntil(refreshAll(env, { lease, lightweight: true }));
         }
       }
       return json(stats, { headers: { "Cache-Control": "no-store" } }, request, env);
