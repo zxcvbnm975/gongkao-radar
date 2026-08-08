@@ -211,6 +211,42 @@ const FALLBACK_DATA = {
       examDate: null,
       recruitmentCount: null,
       official: true
+    },
+    {
+      id: "state-grid-recruitment-portal",
+      title: "国家电网有限公司人力资源招聘平台（官方入口）",
+      summary: "国家电网招聘公告、单位信息、职位申请、考试通知及录用公示的官方统一入口。",
+      sourceName: "国家电网有限公司",
+      articleUrl: "https://zhaopin.sgcc.com.cn/sgcchr/static/home.html",
+      region: "全国",
+      city: null,
+      priority: false,
+      track: "国家电网",
+      type: "官方入口",
+      publishedAt: null,
+      registrationStart: null,
+      registrationEnd: null,
+      examDate: null,
+      recruitmentCount: null,
+      official: true
+    },
+    {
+      id: "tobacco-recruitment-portal",
+      title: "国家烟草专卖局人才招聘平台（官方入口）",
+      summary: "烟草行业各直属单位招聘公告、岗位计划、资格审查和录用公示的官方发布入口。",
+      sourceName: "国家烟草专卖局",
+      articleUrl: "https://www.tobacco.gov.cn/gjyc/rczp/list.shtml",
+      region: "全国",
+      city: null,
+      priority: false,
+      track: "烟草系统",
+      type: "官方入口",
+      publishedAt: null,
+      registrationStart: null,
+      registrationEnd: null,
+      examDate: null,
+      recruitmentCount: null,
+      official: true
     }
   ],
   sources: [

@@ -134,7 +134,7 @@ const SOURCES = [
 ];
 
 const FOCUS_CITIES = ["金昌市", "武威市", "张掖市"];
-const SEED_VERSION = "3";
+const SEED_VERSION = "4";
 
 const SEED_ITEMS = [
   {
@@ -340,6 +340,44 @@ const SEED_ITEMS = [
     track: "事业单位",
     type: "招考公告",
     publishedAt: "2026-06-26T00:00:00+08:00",
+    registrationStart: null,
+    registrationEnd: null,
+    examDate: null,
+    recruitmentCount: null,
+    official: true
+  },
+  {
+    id: "seed-state-grid-recruitment-portal",
+    title: "国家电网有限公司人力资源招聘平台（官方入口）",
+    summary: "国家电网招聘公告、单位信息、职位申请、考试通知及录用公示的官方统一入口。",
+    sourceName: "国家电网有限公司",
+    sourceUrl: "https://zhaopin.sgcc.com.cn/",
+    articleUrl: "https://zhaopin.sgcc.com.cn/sgcchr/static/home.html",
+    region: "全国",
+    city: null,
+    priority: false,
+    track: "国家电网",
+    type: "官方入口",
+    publishedAt: null,
+    registrationStart: null,
+    registrationEnd: null,
+    examDate: null,
+    recruitmentCount: null,
+    official: true
+  },
+  {
+    id: "seed-tobacco-recruitment-portal",
+    title: "国家烟草专卖局人才招聘平台（官方入口）",
+    summary: "烟草行业各直属单位招聘公告、岗位计划、资格审查和录用公示的官方发布入口。",
+    sourceName: "国家烟草专卖局",
+    sourceUrl: "https://www.tobacco.gov.cn/",
+    articleUrl: "https://www.tobacco.gov.cn/gjyc/rczp/list.shtml",
+    region: "全国",
+    city: null,
+    priority: false,
+    track: "烟草系统",
+    type: "官方入口",
+    publishedAt: null,
     registrationStart: null,
     registrationEnd: null,
     examDate: null,
