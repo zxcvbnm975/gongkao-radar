@@ -142,6 +142,7 @@ const SOURCE_BATCH_SIZE = 4;
 const INITIAL_SOURCE_BATCH_SIZE = 6;
 const INITIAL_SOURCE_TIMEOUT_MS = 3500;
 const REFRESH_LEASE_MS = 3 * 60 * 1000;
+const SOURCE_ALARM_STRATEGY = "source-alarm-v1";
 const SEED_VERSION = "4";
 
 const SEED_ITEMS = [
@@ -896,14 +897,74 @@ export class NewsStore {
   }
 
   async alarm() {
-    const startedAt = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray()[0]?.value || new Date().toISOString();
-    const { collected, report } = await collectAllSources({ lightweight: true });
+    const strategy = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_strategy'").toArray()[0]?.value;
+    if (strategy !== SOURCE_ALARM_STRATEGY) return;
+
+    const automaticSources = SOURCES.filter((source) => source.mode !== "portal");
+    const indexValue = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_source_index'").toArray()[0]?.value;
+    const index = Math.max(Number(indexValue) || 0, 0);
+    const source = automaticSources[index];
+    if (!source) return;
+
+    const started = Date.now();
+    let items = [];
+    let sourceReport;
+    try {
+      const result = await collectSource(source, { lightweight: true });
+      items = result.items;
+      sourceReport = {
+        sourceId: source.id,
+        source: source.name,
+        status: result.items.length ? "success" : "empty",
+        ok: true,
+        found: result.items.length,
+        candidates: result.candidates,
+        durationMs: Date.now() - started,
+        checkedAt: new Date().toISOString()
+      };
+    } catch (error) {
+      sourceReport = {
+        sourceId: source.id,
+        source: source.name,
+        status: "error",
+        ok: false,
+        found: 0,
+        durationMs: Date.now() - started,
+        checkedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+
+    this.upsert(items);
+    const pendingValue = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'pending_report'").toArray()[0]?.value;
+    const pendingReport = pendingValue ? JSON.parse(pendingValue) : [];
+    const nextReport = [...pendingReport.filter((report) => report.sourceId !== source.id), sourceReport];
+    const nextIndex = index + 1;
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('pending_report', ?)", JSON.stringify(nextReport));
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_source_index', ?)", String(nextIndex));
+
+    if (nextIndex < automaticSources.length) {
+      await this.ctx.storage.setAlarm(Date.now() + 100);
+      return;
+    }
+
+    const checkedAt = new Date().toISOString();
+    const portalReports = SOURCES.filter((item) => item.mode === "portal").map((item) => ({
+      sourceId: item.id,
+      source: item.name,
+      status: "portal",
+      ok: true,
+      found: 0,
+      durationMs: 0,
+      checkedAt
+    }));
+    const reportsById = new Map([...nextReport, ...portalReports].map((report) => [report.sourceId, report]));
+    const report = SOURCES.map((item) => reportsById.get(item.id));
     const syncedAt = new Date().toISOString();
-    this.upsert(collected);
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('synced_at', ?)", syncedAt);
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('last_report', ?)", JSON.stringify(report));
-    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", startedAt);
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", syncedAt);
+    this.ctx.storage.sql.exec("DELETE FROM metadata WHERE key IN ('pending_report', 'refresh_source_index')");
   }
 
   async fetch(request) {
@@ -931,12 +992,14 @@ export class NewsStore {
       const now = Date.now();
       const started = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray()[0]?.value || null;
       const finished = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_finished_at'").toArray()[0]?.value || null;
+      const strategy = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_strategy'").toArray()[0]?.value || null;
       const startedAt = started ? new Date(started).getTime() : 0;
       const finishedAt = finished ? new Date(finished).getTime() : 0;
-      const collecting = startedAt > finishedAt && now - startedAt < REFRESH_LEASE_MS;
+      const collecting = Boolean(strategy) && startedAt > finishedAt && now - startedAt < REFRESH_LEASE_MS;
       if (collecting) return Response.json({ granted: false, startedAt: started });
       const nextStartedAt = new Date(now).toISOString();
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", nextStartedAt);
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_strategy', 'bulk')");
       return Response.json({ granted: true, startedAt: nextStartedAt });
     }
 
@@ -944,12 +1007,16 @@ export class NewsStore {
       const now = Date.now();
       const started = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray()[0]?.value || null;
       const finished = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_finished_at'").toArray()[0]?.value || null;
+      const strategy = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_strategy'").toArray()[0]?.value || null;
       const startedAt = started ? new Date(started).getTime() : 0;
       const finishedAt = finished ? new Date(finished).getTime() : 0;
-      const collecting = startedAt > finishedAt && now - startedAt < REFRESH_LEASE_MS;
+      const collecting = Boolean(strategy) && startedAt > finishedAt && now - startedAt < REFRESH_LEASE_MS;
       if (collecting) return Response.json({ granted: false, startedAt: started });
       const nextStartedAt = new Date(now).toISOString();
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", nextStartedAt);
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_strategy', ?)", SOURCE_ALARM_STRATEGY);
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('pending_report', '[]')");
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_source_index', '0')");
       await this.ctx.storage.setAlarm(now + 100);
       return Response.json({ granted: true, startedAt: nextStartedAt });
     }
@@ -987,6 +1054,8 @@ export class NewsStore {
       const regions = this.ctx.storage.sql.exec("SELECT COUNT(DISTINCT region) AS count FROM articles").one().count;
       const synced = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'synced_at'").toArray();
       const report = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'last_report'").toArray();
+      const pendingReport = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'pending_report'").toArray();
+      const strategy = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_strategy'").toArray()[0]?.value || null;
       const started = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray();
       const finished = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_finished_at'").toArray();
       const refreshStartedAt = started[0]?.value || null;
@@ -997,10 +1066,12 @@ export class NewsStore {
         total,
         regions,
         syncedAt: synced[0]?.value || null,
-        collecting: startedTime > finishedTime && Date.now() - startedTime < REFRESH_LEASE_MS,
+        collecting: Boolean(strategy) && startedTime > finishedTime && Date.now() - startedTime < REFRESH_LEASE_MS,
         refreshStartedAt,
         refreshFinishedAt,
-        lastReport: report[0]?.value ? JSON.parse(report[0].value) : []
+        lastReport: pendingReport[0]?.value && startedTime > finishedTime
+          ? JSON.parse(pendingReport[0].value)
+          : report[0]?.value ? JSON.parse(report[0].value) : []
       });
     }
 
