@@ -120,6 +120,7 @@ const SOURCES = [
     badge: "电",
     url: "https://zhaopin.sgcc.com.cn/sgcchr/static/home.html",
     track: "国家电网",
+    mode: "portal",
     official: true
   },
   {
@@ -129,11 +130,16 @@ const SOURCES = [
     badge: "烟",
     url: "https://www.tobacco.gov.cn/gjyc/rczp/list.shtml",
     track: "烟草系统",
+    mode: "portal",
     official: true
   }
 ];
 
 const FOCUS_CITIES = ["金昌市", "武威市", "张掖市"];
+const MAX_ITEMS_PER_SOURCE = 5;
+const MAX_DETAIL_PAGES_PER_SOURCE = 1;
+const SOURCE_BATCH_SIZE = 4;
+const REFRESH_LEASE_MS = 15 * 60 * 1000;
 const SEED_VERSION = "4";
 
 const SEED_ITEMS = [
@@ -519,28 +525,36 @@ async function hash(value) {
   return [...new Uint8Array(digest)].slice(0, 12).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function fetchText(url, timeoutMs = 12000) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": "GongkaoRadar/1.0 (+official-information-monitor; low-frequency)"
-      }
-    });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return response.text();
-  } finally {
-    clearTimeout(timeout);
+async function fetchText(url, timeoutMs = 12000, attempts = 2) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          "Accept-Language": "zh-CN,zh;q=0.9",
+          "User-Agent": "Mozilla/5.0 (compatible; GongkaoRadar/1.1; +official-information-monitor)"
+        }
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.text();
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 400));
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  throw lastError || new Error("来源访问失败");
 }
 
 async function enrichItem(item) {
   try {
-    const html = await fetchText(item.articleUrl, 10000);
+    const html = await fetchText(item.articleUrl, 10000, 1);
     const fields = extractFields(html, item.publishedAt);
     const fullText = stripHtml(html);
     const titleIndex = fullText.indexOf(item.title.slice(0, 20));
@@ -570,13 +584,21 @@ async function enrichItem(item) {
 
 async function collectSource(source) {
   const html = await fetchText(source.url);
-  const links = parseListing(html, source).slice(0, 10);
-  const output = [];
-  for (let index = 0; index < links.length; index += 3) {
-    const batch = await Promise.all(links.slice(index, index + 3).map(enrichItem));
-    output.push(...batch);
-  }
-  return output;
+  const candidates = parseListing(html, source);
+  const links = candidates.slice(0, MAX_ITEMS_PER_SOURCE);
+  const output = await Promise.all(links.map(async (item, index) => {
+    if (index < MAX_DETAIL_PAGES_PER_SOURCE) return enrichItem(item);
+    return {
+      ...item,
+      id: await hash(item.articleUrl),
+      summary: "详细报考条件和时间节点请查看官方原文。",
+      registrationStart: null,
+      registrationEnd: null,
+      examDate: null,
+      recruitmentCount: null
+    };
+  }));
+  return { items: output, candidates: candidates.length };
 }
 
 function getStore(env) {
@@ -591,24 +613,80 @@ async function ensureSeeded(env) {
   });
 }
 
-async function refreshAll(env) {
+async function acquireRefreshLease(env) {
+  const response = await getStore(env).fetch("https://store.internal/refresh-lease", { method: "POST" });
+  return response.json();
+}
+
+async function refreshAll(env, { lease: existingLease = null } = {}) {
   await ensureSeeded(env);
-  const report = [];
+  const lease = existingLease?.granted ? existingLease : await acquireRefreshLease(env);
+  if (!lease.granted) return { ok: true, skipped: true, reason: "已有采集任务正在运行" };
+
+  const reportById = new Map();
   const collected = [];
-  for (const source of SOURCES) {
-    try {
-      const items = await collectSource(source);
-      collected.push(...items);
-      report.push({ source: source.name, ok: true, found: items.length });
-    } catch (error) {
-      report.push({ source: source.name, ok: false, error: error instanceof Error ? error.message : String(error) });
+  const automaticSources = SOURCES.filter((source) => source.mode !== "portal");
+  for (let index = 0; index < automaticSources.length; index += SOURCE_BATCH_SIZE) {
+    const batch = automaticSources.slice(index, index + SOURCE_BATCH_SIZE);
+    const batchResults = await Promise.all(batch.map(async (source) => {
+      const started = Date.now();
+      try {
+        const result = await collectSource(source);
+        return {
+          source,
+          items: result.items,
+          report: {
+            sourceId: source.id,
+            source: source.name,
+            status: result.items.length ? "success" : "empty",
+            ok: true,
+            found: result.items.length,
+            candidates: result.candidates,
+            durationMs: Date.now() - started,
+            checkedAt: new Date().toISOString()
+          }
+        };
+      } catch (error) {
+        return {
+          source,
+          items: [],
+          report: {
+            sourceId: source.id,
+            source: source.name,
+            status: "error",
+            ok: false,
+            found: 0,
+            durationMs: Date.now() - started,
+            checkedAt: new Date().toISOString(),
+            error: error instanceof Error ? error.message : String(error)
+          }
+        };
+      }
+    }));
+    for (const result of batchResults) {
+      collected.push(...result.items);
+      reportById.set(result.source.id, result.report);
     }
   }
+
+  for (const source of SOURCES.filter((item) => item.mode === "portal")) {
+    reportById.set(source.id, {
+      sourceId: source.id,
+      source: source.name,
+      status: "portal",
+      ok: true,
+      found: 0,
+      durationMs: 0,
+      checkedAt: new Date().toISOString()
+    });
+  }
+
+  const report = SOURCES.map((source) => reportById.get(source.id));
   const syncedAt = new Date().toISOString();
   const response = await getStore(env).fetch("https://store.internal/ingest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items: collected, syncedAt, report })
+    body: JSON.stringify({ items: collected, syncedAt, startedAt: lease.startedAt, report })
   });
   const stored = await response.json();
   return { ...stored, report };
@@ -648,10 +726,25 @@ export default {
     }
 
     if (url.pathname === "/api/sources" && request.method === "GET") {
-      return json({ items: SOURCES.map(({ id, ...source }) => source) }, { headers: { "Cache-Control": "public, max-age=3600" } }, request, env);
+      return json({ items: SOURCES }, { headers: { "Cache-Control": "public, max-age=3600" } }, request, env);
     }
 
-    if (["/api/news", "/api/stats", "/api/calendar"].includes(url.pathname) && request.method === "GET") {
+    if (url.pathname === "/api/stats" && request.method === "GET") {
+      await ensureSeeded(env);
+      const response = await getStore(env).fetch("https://store.internal/stats");
+      const stats = await response.json();
+      if (!stats.syncedAt && !stats.collecting) {
+        const lease = await acquireRefreshLease(env);
+        if (lease.granted) {
+          stats.collecting = true;
+          stats.refreshStartedAt = lease.startedAt;
+          ctx.waitUntil(refreshAll(env, { lease }));
+        }
+      }
+      return json(stats, { headers: { "Cache-Control": "no-store" } }, request, env);
+    }
+
+    if (["/api/news", "/api/calendar"].includes(url.pathname) && request.method === "GET") {
       await ensureSeeded(env);
       const internalPath = url.pathname.replace("/api", "") + url.search;
       const response = await getStore(env).fetch(`https://store.internal${internalPath}`);
@@ -809,8 +902,23 @@ export class NewsStore {
       } else {
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('synced_at', ?)", body.syncedAt || new Date().toISOString());
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('last_report', ?)", JSON.stringify(body.report || []));
+        this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", body.startedAt || body.syncedAt || new Date().toISOString());
+        this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", body.syncedAt || new Date().toISOString());
       }
       return Response.json({ ok: true, changed });
+    }
+
+    if (url.pathname === "/refresh-lease" && request.method === "POST") {
+      const now = Date.now();
+      const started = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray()[0]?.value || null;
+      const finished = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_finished_at'").toArray()[0]?.value || null;
+      const startedAt = started ? new Date(started).getTime() : 0;
+      const finishedAt = finished ? new Date(finished).getTime() : 0;
+      const collecting = startedAt > finishedAt && now - startedAt < REFRESH_LEASE_MS;
+      if (collecting) return Response.json({ granted: false, startedAt: started });
+      const nextStartedAt = new Date(now).toISOString();
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", nextStartedAt);
+      return Response.json({ granted: true, startedAt: nextStartedAt });
     }
 
     if (url.pathname === "/news" && request.method === "GET") {
@@ -846,10 +954,19 @@ export class NewsStore {
       const regions = this.ctx.storage.sql.exec("SELECT COUNT(DISTINCT region) AS count FROM articles").one().count;
       const synced = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'synced_at'").toArray();
       const report = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'last_report'").toArray();
+      const started = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray();
+      const finished = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_finished_at'").toArray();
+      const refreshStartedAt = started[0]?.value || null;
+      const refreshFinishedAt = finished[0]?.value || null;
+      const startedTime = refreshStartedAt ? new Date(refreshStartedAt).getTime() : 0;
+      const finishedTime = refreshFinishedAt ? new Date(refreshFinishedAt).getTime() : 0;
       return Response.json({
         total,
         regions,
         syncedAt: synced[0]?.value || null,
+        collecting: startedTime > finishedTime && Date.now() - startedTime < REFRESH_LEASE_MS,
+        refreshStartedAt,
+        refreshFinishedAt,
         lastReport: report[0]?.value ? JSON.parse(report[0].value) : []
       });
     }

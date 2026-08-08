@@ -96,7 +96,15 @@ npx wrangler pages dev public --port 3000
 
 然后访问 `http://localhost:3000`。前端默认连接 `http://localhost:8787` 的 Worker；如果 Worker 未启动，会自动进入内置官方样例模式，不会出现空白页。
 
-## 三、定时更新机制
+## 三、来源运行状态
+
+首次打开网页时，如果系统还没有完成过真实采集，Worker 会自动启动一次来源检测。网页“官方来源”区域会显示每个来源的当前状态：检测中、正常、暂无新公告、访问失败或动态平台官方入口。
+
+`GET /api/stats` 会返回 `collecting`、`refreshStartedAt`、`refreshFinishedAt` 和 `lastReport`。系统使用采集租约避免定时任务、首次检测和手工刷新重复运行；单个来源失败不会中断其他来源，失败来源会在下次定时任务中重新检测。
+
+国家电网和烟草招聘平台属于动态招聘系统，当前显示并核验官方入口，不把它们误报为可自动解析的静态公告来源。
+
+## 四、定时更新机制
 
 `worker/wrangler.jsonc` 中的 Cron 为：
 
@@ -104,7 +112,7 @@ npx wrangler pages dev public --port 3000
 15 23 * * *
 ```
 
-Cloudflare Cron 使用 UTC，因此任务会在北京时间每天 07:15 执行。采集器只访问已配置的官方列表页，并限制每个来源最多解析 10 个详情页。
+Cloudflare Cron 使用 UTC，因此任务会在北京时间每天 07:15 执行。采集器只访问已配置的官方列表页；每个来源最多收录 5 条公告，并只深入解析最新 1 个详情页，以控制请求量和降低对官方站点的压力。
 
 对外接口：
 
@@ -117,14 +125,14 @@ Cloudflare Cron 使用 UTC，因此任务会在北京时间每天 07:15 执行�
 | `GET /api/calendar` | 已提取的报名及考试节点 |
 | `POST /api/refresh` | 使用管理员密钥手工刷新 |
 
-## 四、生产环境建议
+## 五、生产环境建议
 
 1. 把 `ALLOWED_ORIGINS` 从 `*` 改成你的 Pages 正式域名；多个域名以英文逗号分隔。
 2. 定期查看 `/api/stats` 的 `lastReport`，发现来源失效时更新 `SOURCES`。
 3. 不要提高抓取频率；遵守各官方站点的 robots、访问频控和使用条款。
 4. 对报名时间、招录人数等关键字段保留“待公布”状态，不要用往年日期自动补全。
 
-## 五、验证
+## 六、验证
 
 ```powershell
 npm run check

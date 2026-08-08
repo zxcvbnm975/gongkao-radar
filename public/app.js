@@ -263,8 +263,8 @@ const FALLBACK_DATA = {
     { name: "金昌市人力资源和社会保障局", region: "甘肃", city: "金昌市", track: "事业单位", url: "http://rsj.jcs.gov.cn/", badge: "金" },
     { name: "武威市人民政府", region: "甘肃", city: "武威市", track: "事业单位", url: "https://www.gswuwei.gov.cn/", badge: "武" },
     { name: "张掖市人力资源和社会保障局", region: "甘肃", city: "张掖市", track: "事业单位", url: "https://www.zhangye.gov.cn/rsj/dzdt/tzgg/", badge: "张" },
-    { name: "国家电网有限公司人力资源招聘平台", region: "全国", track: "国家电网", url: "https://zhaopin.sgcc.com.cn/sgcchr/static/home.html", badge: "电" },
-    { name: "国家烟草专卖局人才招聘平台", region: "全国", track: "烟草系统", url: "https://www.tobacco.gov.cn/gjyc/rczp/list.shtml", badge: "烟" }
+    { name: "国家电网有限公司人力资源招聘平台", region: "全国", track: "国家电网", mode: "portal", url: "https://zhaopin.sgcc.com.cn/sgcchr/static/home.html", badge: "电" },
+    { name: "国家烟草专卖局人才招聘平台", region: "全国", track: "烟草系统", mode: "portal", url: "https://www.tobacco.gov.cn/gjyc/rczp/list.shtml", badge: "烟" }
   ],
   syncedAt: null,
   fallback: true
@@ -274,7 +274,11 @@ const state = {
   allItems: [],
   visibleCount: 6,
   sources: [],
+  sourceReport: [],
   syncedAt: null,
+  collecting: false,
+  pollCount: 0,
+  pollTimer: null,
   usingFallback: false,
   focusCity: ""
 };
@@ -290,6 +294,7 @@ const els = {
   calendarList: document.querySelector("#calendar-list"),
   calendarMonth: document.querySelector("#calendar-month"),
   sourceList: document.querySelector("#source-list"),
+  sourceHealth: document.querySelector("#source-health"),
   heroEvents: document.querySelector("#hero-events"),
   refreshButton: document.querySelector("#refresh-button"),
   toast: document.querySelector("#toast"),
@@ -433,12 +438,54 @@ function renderHeroEvents() {
 }
 
 function renderSources() {
+  const reports = new Map();
+  for (const report of state.sourceReport) {
+    if (report.sourceId) reports.set(report.sourceId, report);
+    if (report.source) reports.set(report.source, report);
+  }
+
+  const automaticSources = state.sources.filter((source) => source.mode !== "portal");
+  const healthyCount = automaticSources.filter((source) => {
+    const report = reports.get(source.id) || reports.get(source.name);
+    return report?.ok;
+  }).length;
+  const failedCount = automaticSources.filter((source) => {
+    const report = reports.get(source.id) || reports.get(source.name);
+    return report && !report.ok;
+  }).length;
+
+  if (state.collecting) {
+    els.sourceHealth.textContent = "正在检测全部官方来源，结果会自动更新";
+  } else if (!state.syncedAt) {
+    els.sourceHealth.textContent = "等待首次自动检测";
+  } else {
+    els.sourceHealth.textContent = `${healthyCount}/${automaticSources.length} 个自动来源正常${failedCount ? ` · ${failedCount} 个待重试` : ""} · ${formatPublished(state.syncedAt)}`;
+  }
+
   els.sourceList.innerHTML = state.sources.map((source) => `
     <a class="source-item" href="${safeUrl(source.url)}" target="_blank" rel="noopener noreferrer">
       <span class="source-badge">${escapeHtml(source.badge || source.region.slice(0, 1))}</span>
-      <span class="source-copy"><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.city || source.region)} · ${source.track ? `${escapeHtml(source.track)} · ` : ""}自动监测</span></span>
+      <span class="source-copy"><strong>${escapeHtml(source.name)}</strong>${renderSourceStatus(source, reports.get(source.id) || reports.get(source.name))}</span>
       <span class="source-arrow">↗</span>
     </a>`).join("");
+}
+
+function renderSourceStatus(source, report) {
+  const scope = escapeHtml(source.city || source.region);
+  if (source.mode === "portal" || report?.status === "portal") {
+    return `<span class="source-status portal"><i></i>${scope} · 动态平台官方入口</span>`;
+  }
+  if (state.collecting && !report) {
+    return `<span class="source-status checking"><i></i>${scope} · 检测中</span>`;
+  }
+  if (!report) {
+    return `<span class="source-status pending"><i></i>${scope} · 等待检测</span>`;
+  }
+  if (!report.ok) {
+    return `<span class="source-status error"><i></i>${scope} · 访问失败，稍后重试</span>`;
+  }
+  const detail = report.found > 0 ? `收录 ${report.found} 条` : "可访问，暂无新公告";
+  return `<span class="source-status ready"><i></i>${scope} · ${detail}</span>`;
 }
 
 function updateStats() {
@@ -448,7 +495,7 @@ function updateStats() {
   const syncDate = state.syncedAt ? new Date(state.syncedAt) : null;
   const syncLabel = syncDate && !Number.isNaN(syncDate.getTime())
     ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(syncDate)
-    : "演示数据";
+    : state.collecting ? "检测中" : "演示数据";
   document.querySelector("#stat-total").textContent = state.allItems.length.toLocaleString("zh-CN");
   document.querySelector("#stat-new").textContent = recent;
   document.querySelector("#stat-regions").textContent = regions;
@@ -469,9 +516,11 @@ async function request(path) {
   return response.json();
 }
 
-async function loadData({ notify = false } = {}) {
-  els.refreshButton.disabled = true;
-  els.refreshButton.textContent = "同步中…";
+async function loadData({ notify = false, background = false } = {}) {
+  if (!background) {
+    els.refreshButton.disabled = true;
+    els.refreshButton.textContent = "加载中…";
+  }
   try {
     const [news, sources, stats] = await Promise.all([
       request("/api/news?limit=100"),
@@ -480,22 +529,28 @@ async function loadData({ notify = false } = {}) {
     ]);
     state.allItems = news.items || [];
     state.sources = sources.items || FALLBACK_DATA.sources;
+    state.sourceReport = stats.lastReport || [];
     state.syncedAt = stats.syncedAt || null;
+    state.collecting = Boolean(stats.collecting);
     state.usingFallback = false;
-    els.headerStatus.textContent = "官方数据已连接";
+    els.headerStatus.textContent = state.collecting ? "正在检测官方来源" : "官方数据已连接";
     els.statusDot.className = "status-dot ready";
     if (notify) showToast("资讯已刷新");
   } catch (error) {
     state.allItems = FALLBACK_DATA.items;
     state.sources = FALLBACK_DATA.sources;
+    state.sourceReport = [];
     state.syncedAt = FALLBACK_DATA.syncedAt;
+    state.collecting = false;
     state.usingFallback = true;
     els.headerStatus.textContent = "演示数据模式";
     els.statusDot.className = "status-dot error";
     if (notify) showToast("暂未连接 Worker，当前显示内置官方样例");
   } finally {
-    els.refreshButton.disabled = false;
-    els.refreshButton.textContent = "立即刷新";
+    if (!background) {
+      els.refreshButton.disabled = false;
+      els.refreshButton.textContent = "重新加载";
+    }
   }
 
   renderNews();
@@ -503,6 +558,14 @@ async function loadData({ notify = false } = {}) {
   renderHeroEvents();
   renderSources();
   updateStats();
+
+  window.clearTimeout(state.pollTimer);
+  if (state.collecting && state.pollCount < 12) {
+    state.pollCount += 1;
+    state.pollTimer = window.setTimeout(() => loadData({ background: true }), 12000);
+  } else if (!state.collecting) {
+    state.pollCount = 0;
+  }
 }
 
 document.querySelector("#filters").addEventListener("input", () => {
