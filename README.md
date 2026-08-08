@@ -45,10 +45,9 @@
 
 | 名称 | 示例 | 是否必填 |
 | --- | --- | --- |
-| `WORKER_API_URL` | `https://gongkao-radar-api.<你的子域>.workers.dev` | 是 |
 | `PAGES_PROJECT_NAME` | `gongkao-radar` | 否 |
 
-Workers 子域可在 Cloudflare 控制台 **Workers & Pages → Overview** 中查看。Worker 名称已在 `worker/wrangler.jsonc` 中设为 `gongkao-radar-api`。
+Worker 名称已在 `worker/wrangler.jsonc` 中设为 `gongkao-radar-api`。部署工作流会自动读取 Worker 发布地址并写入 Pages 前端，无需手工配置 `WORKER_API_URL`。
 
 ### 4. 运行部署
 
