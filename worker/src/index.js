@@ -848,6 +848,8 @@ export class NewsStore {
     let changed = 0;
     for (const item of items) {
       if (!item?.id || !item?.title || !item?.articleUrl) continue;
+      const existingByUrl = this.ctx.storage.sql.exec("SELECT id FROM articles WHERE article_url = ? LIMIT 1", item.articleUrl).toArray()[0];
+      const effectiveId = existingByUrl?.id || item.id;
       this.ctx.storage.sql.exec(
         `INSERT INTO articles (
           id, title, summary, source_name, source_url, article_url, region, city, priority, track, type,
@@ -872,7 +874,7 @@ export class NewsStore {
           recruitment_count = COALESCE(excluded.recruitment_count, articles.recruitment_count),
           official = excluded.official,
           fetched_at = excluded.fetched_at`,
-        item.id,
+        effectiveId,
         item.title,
         item.summary || null,
         item.sourceName || "官方来源",
