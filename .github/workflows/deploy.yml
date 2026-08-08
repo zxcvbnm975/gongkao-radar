@@ -1,0 +1,63 @@
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare-production
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  deploy-worker:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deploy API Worker
+        run: npx wrangler deploy --config worker/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  deploy-pages:
+    needs: deploy-worker
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PAGES_PROJECT_NAME: ${{ vars.PAGES_PROJECT_NAME || 'gongkao-radar' }}
+      WORKER_API_URL: ${{ vars.WORKER_API_URL }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Connect Pages to Worker API
+        run: node scripts/write-pages-config.mjs
+      - name: Ensure Pages project exists
+        shell: bash
+        run: npx wrangler pages project create "$PAGES_PROJECT_NAME" --production-branch main || echo "Pages project exists; continuing"
+      - name: Deploy Pages site
+        run: npx wrangler pages deploy public --project-name "$PAGES_PROJECT_NAME" --branch main --commit-hash "${{ github.sha }}"

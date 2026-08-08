@@ -1,0 +1,15 @@
+{
+  "name": "gongkao-radar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:worker": "wrangler dev --config worker/wrangler.jsonc",
+    "deploy:worker": "wrangler deploy --config worker/wrangler.jsonc",
+    "deploy:pages": "wrangler pages deploy public --project-name gongkao-radar",
+    "check": "node --check worker/src/index.js && node --check public/app.js && node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.68.0"
+  }
+}

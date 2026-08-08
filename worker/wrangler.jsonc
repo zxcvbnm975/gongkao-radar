@@ -1,0 +1,30 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "gongkao-radar-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": true,
+  "triggers": {
+    "crons": ["15 23 * * *"]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "NEWS_STORE",
+        "class_name": "NewsStore"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["NewsStore"]
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGINS": "*"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

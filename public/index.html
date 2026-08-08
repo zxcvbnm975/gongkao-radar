@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="每天自动汇总国考、甘肃及重点城市、上海、江苏、浙江公务员招录官方资讯。" />
+    <meta name="theme-color" content="#173f35" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>公考雷达｜官方招录资讯聚合</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <header class="site-header">
+      <a class="brand" href="#" aria-label="公考雷达首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>公考雷达</span>
+      </a>
+      <nav aria-label="主导航">
+        <a class="active" href="#news">最新资讯</a>
+        <a href="#calendar">考试日历</a>
+        <a href="#sources">官方来源</a>
+      </nav>
+      <div class="header-status"><span class="status-dot"></span><span id="header-status">等待同步</span></div>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> 每日追踪官方招考信息</p>
+          <h1>重要节点，<em>一次都不错过。</em></h1>
+          <p class="hero-description">聚合国考与长三角省考公告，自动提取报名时间、招录人数与考试节点。每条信息均保留官方原文。</p>
+          <div class="hero-actions">
+            <a class="button primary" href="#news">查看最新资讯 <span>↘</span></a>
+            <button class="button secondary" id="refresh-button" type="button">立即刷新</button>
+          </div>
+        </div>
+        <div class="hero-card" aria-label="近期关键节点">
+          <div class="hero-card-heading">
+            <span>近期关键节点</span>
+            <span class="live-pill">LIVE</span>
+          </div>
+          <div id="hero-events" class="hero-events">
+            <div class="skeleton tall"></div>
+            <div class="skeleton tall"></div>
+          </div>
+          <p class="hero-card-note">时间以官方最终公告为准</p>
+        </div>
+      </section>
+
+      <section class="stats" aria-label="资讯概况">
+        <article><span class="stat-icon">讯</span><div><strong id="stat-total">—</strong><p>已收录资讯</p></div></article>
+        <article><span class="stat-icon">新</span><div><strong id="stat-new">—</strong><p>近 7 日新增</p></div></article>
+        <article><span class="stat-icon">省</span><div><strong id="stat-regions">—</strong><p>覆盖地区</p></div></article>
+        <article><span class="stat-icon accent">时</span><div><strong id="stat-updated">—</strong><p>最近同步</p></div></article>
+      </section>
+
+      <section class="content-grid" id="news">
+        <div class="news-column">
+          <div class="section-heading">
+            <div><p class="section-kicker">INFORMATION</p><h2>最新招考资讯</h2></div>
+            <p id="result-count">正在读取官方资讯…</p>
+          </div>
+
+          <form class="filters" id="filters" role="search">
+            <label class="search-field">
+              <span class="sr-only">搜索公告</span>
+              <span aria-hidden="true">⌕</span>
+              <input id="keyword" name="keyword" type="search" placeholder="搜索公告、地区或关键词" autocomplete="off" />
+            </label>
+            <label>
+              <span class="sr-only">选择地区</span>
+              <select id="region" name="region">
+                <option value="">全部地区</option>
+                <option value="全国">国考</option>
+                <option value="上海">上海</option>
+                <option value="江苏">江苏</option>
+                <option value="浙江">浙江</option>
+                <option value="甘肃">甘肃</option>
+              </select>
+            </label>
+            <label>
+              <span class="sr-only">选择资讯类型</span>
+              <select id="type" name="type">
+                <option value="">全部类型</option>
+                <option value="招考公告">招考公告</option>
+                <option value="报名提醒">报名提醒</option>
+                <option value="考试安排">考试安排</option>
+                <option value="资格审查">资格审查</option>
+              </select>
+            </label>
+          </form>
+
+          <div class="focus-filter" id="focus-filter" aria-label="甘肃重点关注城市">
+            <span><i></i> 甘肃重点关注</span>
+            <button type="button" data-city="金昌市" aria-pressed="false">金昌市</button>
+            <button type="button" data-city="武威市" aria-pressed="false">武威市</button>
+            <button type="button" data-city="张掖市" aria-pressed="false">张掖市</button>
+            <button type="button" data-city="" aria-pressed="true">全部重点</button>
+          </div>
+
+          <div id="news-list" class="news-list" aria-live="polite">
+            <article class="news-card loading"><div class="skeleton line small"></div><div class="skeleton line"></div><div class="skeleton line medium"></div></article>
+            <article class="news-card loading"><div class="skeleton line small"></div><div class="skeleton line"></div><div class="skeleton line medium"></div></article>
+          </div>
+          <button id="load-more" class="load-more" type="button" hidden>查看更多资讯</button>
+        </div>
+
+        <aside class="sidebar">
+          <section class="side-card calendar-card" id="calendar">
+            <div class="side-card-heading"><div><p>CALENDAR</p><h2>考试日历</h2></div><span id="calendar-month"></span></div>
+            <div id="calendar-list" class="calendar-list"><div class="skeleton tall"></div></div>
+            <p class="calendar-tip"><span>!</span> “待官方公布”的日期不会参与倒计时。</p>
+          </section>
+
+          <section class="side-card source-card" id="sources">
+            <div class="side-card-heading"><div><p>SOURCES</p><h2>官方来源</h2></div></div>
+            <div id="source-list" class="source-list"><div class="skeleton line"></div><div class="skeleton line"></div></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <footer>
+      <div class="brand footer-brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>公考雷达</span></div>
+      <p>本站仅聚合公开信息，不是政府官方网站。报考前请务必核对官方原文。</p>
+      <p>数据每日自动更新 · <span id="footer-updated">尚未同步</span></p>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/config.js" onerror="this.remove()"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
