@@ -73,11 +73,68 @@ const SOURCES = [
     badge: "张",
     url: "https://www.zhangye.gov.cn/zyszfxxgk/fdzdgknr_5657/rsxx_5667/ghb.html",
     official: true
+  },
+  {
+    id: "gansu-institutions",
+    name: "甘肃人事考试网·事业单位考试",
+    region: "甘肃",
+    badge: "事",
+    url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks",
+    track: "事业单位",
+    official: true
+  },
+  {
+    id: "jinchang-institutions",
+    name: "金昌市人力资源和社会保障局",
+    region: "甘肃",
+    city: "金昌市",
+    badge: "金",
+    url: "http://rsj.jcs.gov.cn/",
+    track: "事业单位",
+    official: true
+  },
+  {
+    id: "wuwei-institutions",
+    name: "武威市人民政府",
+    region: "甘肃",
+    city: "武威市",
+    badge: "武",
+    url: "https://www.gswuwei.gov.cn/",
+    track: "事业单位",
+    official: true
+  },
+  {
+    id: "zhangye-institutions",
+    name: "张掖市人力资源和社会保障局",
+    region: "甘肃",
+    city: "张掖市",
+    badge: "张",
+    url: "https://www.zhangye.gov.cn/rsj/dzdt/tzgg/",
+    track: "事业单位",
+    official: true
+  },
+  {
+    id: "state-grid",
+    name: "国家电网有限公司人力资源招聘平台",
+    region: "全国",
+    badge: "电",
+    url: "https://zhaopin.sgcc.com.cn/sgcchr/static/home.html",
+    track: "国家电网",
+    official: true
+  },
+  {
+    id: "tobacco",
+    name: "国家烟草专卖局人才招聘平台",
+    region: "全国",
+    badge: "烟",
+    url: "https://www.tobacco.gov.cn/gjyc/rczp/list.shtml",
+    track: "烟草系统",
+    official: true
   }
 ];
 
 const FOCUS_CITIES = ["金昌市", "武威市", "张掖市"];
-const SEED_VERSION = "2";
+const SEED_VERSION = "3";
 
 const SEED_ITEMS = [
   {
@@ -231,10 +288,75 @@ const SEED_ITEMS = [
     examDate: null,
     recruitmentCount: null,
     official: true
+  },
+  {
+    id: "seed-gansu-institutions-2026-h1",
+    title: "甘肃省2026年上半年事业单位公开招聘分类考试公告汇总",
+    summary: "汇总省直、中央在甘单位及市州事业单位招聘公告，其中包含金昌市事业单位公开招聘入口。",
+    sourceName: "甘肃人事考试网",
+    sourceUrl: "https://ks.rst.gansu.gov.cn/",
+    articleUrl: "https://ks.rst.gansu.gov.cn/ncms/article_94c932a06035be27985b208aedc5ea79.shtml",
+    region: "甘肃",
+    city: "金昌市",
+    priority: true,
+    track: "事业单位",
+    type: "招考公告",
+    publishedAt: "2026-02-14T00:00:00+08:00",
+    registrationStart: null,
+    registrationEnd: null,
+    examDate: null,
+    recruitmentCount: null,
+    official: true
+  },
+  {
+    id: "seed-wuwei-institutions-2026",
+    title: "甘肃省武威市2026年事业单位公开招聘工作人员公告",
+    summary: "武威市计划公开招聘事业单位工作人员568名，后续资格复审、面试及拟聘用信息将在武威市人民政府网发布。",
+    sourceName: "武威市人民政府",
+    sourceUrl: "https://www.gswuwei.gov.cn/",
+    articleUrl: "https://www.gswuwei.gov.cn/",
+    region: "甘肃",
+    city: "武威市",
+    priority: true,
+    track: "事业单位",
+    type: "招考公告",
+    publishedAt: "2026-04-03T00:00:00+08:00",
+    registrationStart: "2026-04-08T09:00:00+08:00",
+    registrationEnd: "2026-04-14T18:00:00+08:00",
+    examDate: "2026-05-10T00:00:00+08:00",
+    recruitmentCount: 568,
+    official: true
+  },
+  {
+    id: "seed-zhangye-institutions-2026",
+    title: "张掖市2026年市直事业单位公开引进高层次人才公告（第二批）",
+    summary: "张掖市面向社会公开引进一批高层次人才，资格条件、岗位计划和后续考试考核安排以市人社局原文为准。",
+    sourceName: "张掖市人力资源和社会保障局",
+    sourceUrl: "https://www.zhangye.gov.cn/rsj/",
+    articleUrl: "https://www.zhangye.gov.cn/rsj/dzdt/tzgg/202606/t20260626_1558191.html",
+    region: "甘肃",
+    city: "张掖市",
+    priority: true,
+    track: "事业单位",
+    type: "招考公告",
+    publishedAt: "2026-06-26T00:00:00+08:00",
+    registrationStart: null,
+    registrationEnd: null,
+    examDate: null,
+    recruitmentCount: null,
+    official: true
   }
 ];
 
-const RELEVANT_TITLE = /(公务员|国考|省考|选调生).{0,18}(招录|考录|考试|报名|职位|公告|调剂|补录|面试|笔试|资格|目录)|(招录|考录|考试|报名|职位|公告|调剂|补录|面试|笔试|资格|目录).{0,18}(公务员|国考|省考|选调生)/;
+const RELEVANT_TITLE = /(公务员|国考|省考|选调生|事业单位|事业编制|事业岗位|国家电网|国网|烟草专卖局|烟草公司|中烟).{0,30}(招录|考录|招聘|招考|选聘|引进|报名|职位|岗位|公告|调剂|补录|面试|笔试|资格|目录|公示)|(招录|考录|招聘|招考|选聘|引进|报名|职位|岗位|公告|调剂|补录|面试|笔试|资格|目录|公示).{0,30}(公务员|国考|省考|选调生|事业单位|事业编制|事业岗位|国家电网|国网|烟草专卖局|烟草公司|中烟)/;
+
+function isRelevantTitle(title, source = {}) {
+  if (RELEVANT_TITLE.test(title)) return true;
+  if (source.track === "事业单位") return /(公开招聘|公开选聘|拟聘用|招聘工作人员|人才引进|引进.{0,15}(高层次|急需紧缺)人才|资格复审|考试考核)/.test(title);
+  if (source.track === "国家电网") return /(招聘|应聘|录用|高校毕业生|校园招聘)/.test(title);
+  if (source.track === "烟草系统") return /(招聘|招录|应聘|录用|高校毕业生|校园招聘)/.test(title);
+  return false;
+}
 
 export function decodeHtml(value = "") {
   return value
@@ -261,6 +383,14 @@ export function classifyType(title = "") {
   if (/报名|确认|缴费|准考证/.test(title)) return "报名提醒";
   if (/笔试|面试|考试计划|考试安排|时间安排|专业参考目录/.test(title)) return "考试安排";
   return "招考公告";
+}
+
+export function classifyTrack(title = "", fallback = null) {
+  if (/国家电网|国网/.test(title)) return "国家电网";
+  if (/烟草专卖局|烟草公司|中烟|中国烟草/.test(title)) return "烟草系统";
+  if (/事业单位|事业编制|事业岗位|公开引进.{0,15}人才|引进.{0,15}(高层次|急需紧缺)人才/.test(title)) return "事业单位";
+  if (/公务员|国考|省考|选调生/.test(title)) return "公务员";
+  return fallback || "公务员";
 }
 
 export function detectCity(text = "", fallback = null) {
@@ -319,7 +449,7 @@ export function parseListing(html, source) {
   let match;
   while ((match = anchorPattern.exec(html)) && items.length < 20) {
     const title = stripHtml(match[2]);
-    if (title.length < 8 || title.length > 150 || !RELEVANT_TITLE.test(title)) continue;
+    if (title.length < 8 || title.length > 150 || !isRelevantTitle(title, source)) continue;
     let articleUrl;
     try {
       articleUrl = new URL(match[1], source.url).href;
@@ -337,6 +467,7 @@ export function parseListing(html, source) {
       region: source.region,
       city: detectCity(title, source.city || null),
       priority: Boolean(detectCity(title, source.city || null)),
+      track: classifyTrack(title, source.track || null),
       type: classifyType(title),
       official: source.official
     });
@@ -527,6 +658,7 @@ export class NewsStore {
           region TEXT NOT NULL,
           city TEXT,
           priority INTEGER NOT NULL DEFAULT 0,
+          track TEXT NOT NULL DEFAULT '公务员',
           type TEXT NOT NULL,
           published_at TEXT,
           registration_start TEXT,
@@ -543,6 +675,7 @@ export class NewsStore {
       const articleColumns = this.ctx.storage.sql.exec("PRAGMA table_info(articles)").toArray().map((column) => column.name);
       if (!articleColumns.includes("city")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN city TEXT");
       if (!articleColumns.includes("priority")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
+      if (!articleColumns.includes("track")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN track TEXT NOT NULL DEFAULT '公务员'");
       this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS idx_articles_priority ON articles(priority DESC, published_at DESC)");
     });
   }
@@ -558,6 +691,7 @@ export class NewsStore {
       region: row.region,
       city: row.city,
       priority: Boolean(row.priority),
+      track: row.track || classifyTrack(row.title),
       type: row.type,
       publishedAt: row.published_at,
       registrationStart: row.registration_start,
@@ -576,10 +710,10 @@ export class NewsStore {
       if (!item?.id || !item?.title || !item?.articleUrl) continue;
       this.ctx.storage.sql.exec(
         `INSERT INTO articles (
-          id, title, summary, source_name, source_url, article_url, region, city, priority, type,
+          id, title, summary, source_name, source_url, article_url, region, city, priority, track, type,
           published_at, registration_start, registration_end, exam_date,
           recruitment_count, official, fetched_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
           summary = CASE WHEN length(excluded.summary) > 20 THEN excluded.summary ELSE articles.summary END,
@@ -589,6 +723,7 @@ export class NewsStore {
           region = excluded.region,
           city = excluded.city,
           priority = excluded.priority,
+          track = excluded.track,
           type = excluded.type,
           published_at = COALESCE(excluded.published_at, articles.published_at),
           registration_start = COALESCE(excluded.registration_start, articles.registration_start),
@@ -606,6 +741,7 @@ export class NewsStore {
         item.region || "全国",
         item.city || null,
         item.priority ? 1 : 0,
+        item.track || classifyTrack(item.title),
         item.type || classifyType(item.title),
         item.publishedAt || null,
         item.registrationStart || null,
@@ -644,10 +780,12 @@ export class NewsStore {
       const rows = this.ctx.storage.sql.exec("SELECT * FROM articles ORDER BY priority DESC, COALESCE(published_at, fetched_at) DESC LIMIT ?", limit).toArray();
       let items = rows.map((row) => this.rowToItem(row));
       const region = url.searchParams.get("region");
+      const track = url.searchParams.get("track");
       const type = url.searchParams.get("type");
       const city = url.searchParams.get("city");
       const keyword = url.searchParams.get("keyword")?.toLowerCase();
       if (region) items = items.filter((item) => item.region === region);
+      if (track) items = items.filter((item) => item.track === track);
       if (type) items = items.filter((item) => item.type === type);
       if (city) items = items.filter((item) => item.city === city);
       if (keyword) items = items.filter((item) => `${item.title} ${item.summary || ""}`.toLowerCase().includes(keyword));

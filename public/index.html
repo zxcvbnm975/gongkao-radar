@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="每天自动汇总国考、甘肃及重点城市、上海、江苏、浙江公务员招录官方资讯。" />
+    <meta name="description" content="每天自动汇总公务员、甘肃事业单位、国家电网及烟草系统官方招录资讯。" />
     <meta name="theme-color" content="#173f35" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
@@ -29,7 +29,7 @@
         <div class="hero-copy">
           <p class="eyebrow"><span></span> 每日追踪官方招考信息</p>
           <h1>重要节点，<em>一次都不错过。</em></h1>
-          <p class="hero-description">聚合国考与长三角省考公告，自动提取报名时间、招录人数与考试节点。每条信息均保留官方原文。</p>
+          <p class="hero-description">聚合公务员、甘肃事业单位、国家电网与烟草系统招录公告，自动提取报名时间、招录人数与考试节点。每条信息均保留官方原文。</p>
           <div class="hero-actions">
             <a class="button primary" href="#news">查看最新资讯 <span>↘</span></a>
             <button class="button secondary" id="refresh-button" type="button">立即刷新</button>
@@ -77,6 +77,16 @@
                 <option value="江苏">江苏</option>
                 <option value="浙江">浙江</option>
                 <option value="甘肃">甘肃</option>
+              </select>
+            </label>
+            <label>
+              <span class="sr-only">选择招录方向</span>
+              <select id="track" name="track">
+                <option value="">全部方向</option>
+                <option value="公务员">公务员</option>
+                <option value="事业单位">事业单位</option>
+                <option value="国家电网">国家电网</option>
+                <option value="烟草系统">烟草系统</option>
               </select>
             </label>
             <label>

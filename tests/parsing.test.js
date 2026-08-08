@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyType, detectCity, extractFields, normalizeDate, parseListing, stripHtml } from "../worker/src/index.js";
+import { classifyTrack, classifyType, detectCity, extractFields, normalizeDate, parseListing, stripHtml } from "../worker/src/index.js";
 
 test("stripHtml removes markup and decodes common entities", () => {
   assert.equal(stripHtml("<p>招录&nbsp;<b>100</b>人 &amp; 报名</p>"), "招录 100 人 & 报名");
@@ -11,6 +11,15 @@ test("classifyType identifies common notice categories", () => {
   assert.equal(classifyType("公务员资格复审通知"), "资格审查");
   assert.equal(classifyType("公务员公共科目笔试安排"), "考试安排");
   assert.equal(classifyType("考试录用公务员公告"), "招考公告");
+});
+
+test("classifyTrack separates civil service, institutions and state-owned employers", () => {
+  assert.equal(classifyTrack("甘肃省事业单位公开招聘工作人员公告"), "事业单位");
+  assert.equal(classifyTrack("国家电网有限公司高校毕业生招聘公告"), "国家电网");
+  assert.equal(classifyTrack("甘肃省烟草专卖局招聘公告"), "烟草系统");
+  assert.equal(classifyTrack("中央机关考试录用公务员公告"), "公务员");
+  assert.equal(classifyTrack("公开招聘工作人员公告", "事业单位"), "事业单位");
+  assert.equal(classifyTrack("考试录用公务员公告", "事业单位"), "公务员");
 });
 
 test("detectCity prioritizes the three configured Gansu cities", () => {
@@ -53,4 +62,19 @@ test("parseListing marks a configured Gansu city as priority", () => {
   const [item] = parseListing(html, source);
   assert.equal(item.city, "金昌市");
   assert.equal(item.priority, true);
+});
+
+test("parseListing accepts institution notices from a dedicated official source", () => {
+  const html = '<a href="/notice.html">2026年公开引进高层次和急需紧缺人才公告</a><span>2026-06-26</span>';
+  const source = { name: "张掖市人社局", region: "甘肃", city: "张掖市", track: "事业单位", url: "https://example.gov.cn/", official: true };
+  const [item] = parseListing(html, source);
+  assert.equal(item.track, "事业单位");
+  assert.equal(item.city, "张掖市");
+});
+
+test("parseListing tags State Grid and tobacco recruitment notices", () => {
+  const gridSource = { name: "国家电网招聘平台", region: "全国", track: "国家电网", url: "https://example.com/", official: true };
+  const tobaccoSource = { name: "烟草招聘平台", region: "全国", track: "烟草系统", url: "https://example.com/", official: true };
+  assert.equal(parseListing('<a href="/grid.html">2027年高校毕业生招聘公告</a>', gridSource)[0].track, "国家电网");
+  assert.equal(parseListing('<a href="/tobacco.html">2027年度招聘岗位公告</a>', tobaccoSource)[0].track, "烟草系统");
 });

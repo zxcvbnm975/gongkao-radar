@@ -157,6 +157,60 @@ const FALLBACK_DATA = {
       examDate: null,
       recruitmentCount: null,
       official: true
+    },
+    {
+      id: "gansu-institutions-2026-h1",
+      title: "甘肃省2026年上半年事业单位公开招聘分类考试公告汇总",
+      summary: "汇总省直、中央在甘单位及市州事业单位招聘公告，其中包含金昌市事业单位公开招聘入口。",
+      sourceName: "甘肃人事考试网",
+      articleUrl: "https://ks.rst.gansu.gov.cn/ncms/article_94c932a06035be27985b208aedc5ea79.shtml",
+      region: "甘肃",
+      city: "金昌市",
+      priority: true,
+      track: "事业单位",
+      type: "招考公告",
+      publishedAt: "2026-02-14T00:00:00+08:00",
+      registrationStart: null,
+      registrationEnd: null,
+      examDate: null,
+      recruitmentCount: null,
+      official: true
+    },
+    {
+      id: "wuwei-institutions-2026",
+      title: "甘肃省武威市2026年事业单位公开招聘工作人员公告",
+      summary: "武威市计划公开招聘事业单位工作人员568名，后续资格复审、面试及拟聘用信息将在武威市人民政府网发布。",
+      sourceName: "武威市人民政府",
+      articleUrl: "https://www.gswuwei.gov.cn/",
+      region: "甘肃",
+      city: "武威市",
+      priority: true,
+      track: "事业单位",
+      type: "招考公告",
+      publishedAt: "2026-04-03T00:00:00+08:00",
+      registrationStart: "2026-04-08T09:00:00+08:00",
+      registrationEnd: "2026-04-14T18:00:00+08:00",
+      examDate: "2026-05-10T00:00:00+08:00",
+      recruitmentCount: 568,
+      official: true
+    },
+    {
+      id: "zhangye-institutions-2026",
+      title: "张掖市2026年市直事业单位公开引进高层次人才公告（第二批）",
+      summary: "张掖市面向社会公开引进一批高层次人才，资格条件、岗位计划和后续考试考核安排以市人社局原文为准。",
+      sourceName: "张掖市人力资源和社会保障局",
+      articleUrl: "https://www.zhangye.gov.cn/rsj/dzdt/tzgg/202606/t20260626_1558191.html",
+      region: "甘肃",
+      city: "张掖市",
+      priority: true,
+      track: "事业单位",
+      type: "招考公告",
+      publishedAt: "2026-06-26T00:00:00+08:00",
+      registrationStart: null,
+      registrationEnd: null,
+      examDate: null,
+      recruitmentCount: null,
+      official: true
     }
   ],
   sources: [
@@ -168,7 +222,13 @@ const FALLBACK_DATA = {
     { name: "甘肃人事考试网", region: "甘肃", url: "https://ks.rst.gansu.gov.cn/", badge: "考" },
     { name: "金昌党建网", region: "甘肃", city: "金昌市", url: "https://www.jczzb.cn/", badge: "金" },
     { name: "甘肃党建武威市平台", region: "甘肃", city: "武威市", url: "https://ww.gsdj.gov.cn/", badge: "武" },
-    { name: "张掖市人民政府", region: "甘肃", city: "张掖市", url: "https://www.zhangye.gov.cn/zyszfxxgk/fdzdgknr_5657/rsxx_5667/ghb.html", badge: "张" }
+    { name: "张掖市人民政府", region: "甘肃", city: "张掖市", url: "https://www.zhangye.gov.cn/zyszfxxgk/fdzdgknr_5657/rsxx_5667/ghb.html", badge: "张" },
+    { name: "甘肃人事考试网·事业单位考试", region: "甘肃", track: "事业单位", url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", badge: "事" },
+    { name: "金昌市人力资源和社会保障局", region: "甘肃", city: "金昌市", track: "事业单位", url: "http://rsj.jcs.gov.cn/", badge: "金" },
+    { name: "武威市人民政府", region: "甘肃", city: "武威市", track: "事业单位", url: "https://www.gswuwei.gov.cn/", badge: "武" },
+    { name: "张掖市人力资源和社会保障局", region: "甘肃", city: "张掖市", track: "事业单位", url: "https://www.zhangye.gov.cn/rsj/dzdt/tzgg/", badge: "张" },
+    { name: "国家电网有限公司人力资源招聘平台", region: "全国", track: "国家电网", url: "https://zhaopin.sgcc.com.cn/sgcchr/static/home.html", badge: "电" },
+    { name: "国家烟草专卖局人才招聘平台", region: "全国", track: "烟草系统", url: "https://www.tobacco.gov.cn/gjyc/rczp/list.shtml", badge: "烟" }
   ],
   syncedAt: null,
   fallback: true
@@ -188,6 +248,7 @@ const els = {
   resultCount: document.querySelector("#result-count"),
   keyword: document.querySelector("#keyword"),
   region: document.querySelector("#region"),
+  track: document.querySelector("#track"),
   type: document.querySelector("#type"),
   loadMore: document.querySelector("#load-more"),
   calendarList: document.querySelector("#calendar-list"),
@@ -214,6 +275,15 @@ function safeUrl(value) {
   } catch {
     return "#";
   }
+}
+
+function trackForItem(item) {
+  if (item.track) return item.track;
+  const text = `${item.title || ""} ${item.sourceName || ""}`;
+  if (/国家电网|国网/.test(text)) return "国家电网";
+  if (/烟草专卖局|烟草公司|中烟|中国烟草/.test(text)) return "烟草系统";
+  if (/事业单位|事业编制|事业岗位|公开引进.{0,15}人才/.test(text)) return "事业单位";
+  return "公务员";
 }
 
 function formatDate(value, options = {}) {
@@ -252,6 +322,7 @@ function filteredItems() {
     const text = `${item.title} ${item.summary || ""} ${item.sourceName} ${item.region}`.toLowerCase();
     return (!keyword || text.includes(keyword))
       && (!els.region.value || item.region === els.region.value)
+      && (!els.track.value || trackForItem(item) === els.track.value)
       && (!els.type.value || item.type === els.type.value)
       && (!state.focusCity || item.city === state.focusCity);
   }).sort((a, b) => Number(Boolean(b.priority)) - Number(Boolean(a.priority)) || new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
@@ -280,6 +351,7 @@ function renderNews() {
           <div class="news-meta">
             <span class="tag ${item.type === "招考公告" ? "accent" : ""}">${escapeHtml(item.region)}</span>
             ${item.city ? `<span class="tag accent">${escapeHtml(item.city)}</span>` : ""}
+            <span class="tag">${escapeHtml(trackForItem(item))}</span>
             <span class="tag">${escapeHtml(item.type)}</span>
             <time datetime="${escapeHtml(item.publishedAt || "")}">${formatPublished(item.publishedAt)}</time>
           </div>
@@ -328,7 +400,7 @@ function renderSources() {
   els.sourceList.innerHTML = state.sources.map((source) => `
     <a class="source-item" href="${safeUrl(source.url)}" target="_blank" rel="noopener noreferrer">
       <span class="source-badge">${escapeHtml(source.badge || source.region.slice(0, 1))}</span>
-      <span class="source-copy"><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.city || source.region)} · 自动监测</span></span>
+      <span class="source-copy"><strong>${escapeHtml(source.name)}</strong><span>${escapeHtml(source.city || source.region)} · ${source.track ? `${escapeHtml(source.track)} · ` : ""}自动监测</span></span>
       <span class="source-arrow">↗</span>
     </a>`).join("");
 }
