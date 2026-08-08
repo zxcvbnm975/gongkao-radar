@@ -140,7 +140,7 @@ const MAX_ITEMS_PER_SOURCE = 5;
 const MAX_DETAIL_PAGES_PER_SOURCE = 1;
 const SOURCE_BATCH_SIZE = 4;
 const INITIAL_SOURCE_BATCH_SIZE = 6;
-const INITIAL_SOURCE_TIMEOUT_MS = 4000;
+const INITIAL_SOURCE_TIMEOUT_MS = 3500;
 const REFRESH_LEASE_MS = 3 * 60 * 1000;
 const SEED_VERSION = "4";
 
@@ -585,7 +585,7 @@ async function enrichItem(item) {
 }
 
 async function collectSource(source, { lightweight = false } = {}) {
-  const html = await fetchText(source.url, lightweight ? INITIAL_SOURCE_TIMEOUT_MS : 12000);
+  const html = await fetchText(source.url, lightweight ? INITIAL_SOURCE_TIMEOUT_MS : 12000, lightweight ? 1 : 2);
   const candidates = parseListing(html, source);
   const links = candidates.slice(0, MAX_ITEMS_PER_SOURCE);
   const output = await Promise.all(links.map(async (item, index) => {
