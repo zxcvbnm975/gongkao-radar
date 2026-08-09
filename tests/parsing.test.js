@@ -98,6 +98,26 @@ test("parseListing applies a source adapter and reads title attributes", () => {
   assert.equal(items[0].articleUrl, "https://example.gov.cn/recruit.html");
 });
 
+test("parseListing extracts announcements from embedded page data", () => {
+  const source = {
+    name: "江苏省公务员局",
+    region: "江苏",
+    url: "https://example.gov.cn/list/",
+    adapter: { titlePattern: "公务员|考试录用" },
+    official: true
+  };
+  const html = `<script>window.__LIST__ = [{
+    "articleTitle":"江苏省2027年度考试录用公务员公告",
+    "detailUrl":"\\/notice\\/2027.html",
+    "publishTime":"2026-10-30"
+  }];</script>`;
+  const [item] = parseListing(html, source);
+  assert.equal(item.title, "江苏省2027年度考试录用公务员公告");
+  assert.equal(item.articleUrl, "https://example.gov.cn/notice/2027.html");
+  assert.equal(item.publishedAt, "2026-10-30T00:00:00+08:00");
+  assert.equal(item.parseMethod, "embedded-data");
+});
+
 test("collectSource switches to an official fallback when the primary endpoint fails", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {

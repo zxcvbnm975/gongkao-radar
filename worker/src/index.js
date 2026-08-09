@@ -5,6 +5,10 @@ const SOURCES = [
     region: "全国",
     badge: "国",
     url: "https://www.scs.gov.cn/",
+    endpoints: [
+      { url: "https://www.scs.gov.cn/", label: "国家公务员局" },
+      { urlTemplate: "http://bm.scs.gov.cn/kl{year}", yearOffsets: [1, 0], label: "{year}年度国考专题" }
+    ],
     adapter: { id: "scs", titlePattern: "公务员|国考|考试录用|公开遴选|公开选调|调剂|补充录用|面试|资格复审" },
     official: true
   },
@@ -14,6 +18,11 @@ const SOURCES = [
     region: "上海",
     badge: "沪",
     url: "https://www.shacs.gov.cn/",
+    endpoints: [
+      { url: "https://www.shacs.gov.cn/", label: "上海市公务员局" },
+      { url: "https://www.shacs.gov.cn/?pc=1", label: "上海市公务员局电脑版" },
+      { url: "https://bm.shacs.gov.cn/zlxt", label: "上海公务员考录专题" }
+    ],
     adapter: { id: "shanghai", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
   },
@@ -23,6 +32,10 @@ const SOURCES = [
     region: "江苏",
     badge: "苏",
     url: "https://www.jszzb.gov.cn/tzgg/",
+    endpoints: [
+      { url: "https://www.jszzb.gov.cn/tzgg/", label: "江苏通知公告" },
+      { url: "https://www.jszzb.gov.cn/", label: "江苏先锋首页" }
+    ],
     adapter: { id: "jiangsu", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
   },
@@ -32,6 +45,10 @@ const SOURCES = [
     region: "浙江",
     badge: "浙",
     url: "https://gwy.zjks.gov.cn/",
+    endpoints: [
+      { url: "https://gwy.zjks.gov.cn/", label: "浙江公务员考试录用网" },
+      { url: "https://gwy.zjks.gov.cn/zjgwy/website/queryMore.htm", label: "浙江重要通知列表" }
+    ],
     adapter: { id: "zhejiang", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
   },
@@ -193,7 +210,7 @@ const INITIAL_SOURCE_BATCH_SIZE = 6;
 const INITIAL_SOURCE_TIMEOUT_MS = 3500;
 const REFRESH_LEASE_MS = 3 * 60 * 1000;
 const SOURCE_ALARM_STRATEGY = "source-alarm-v1";
-const SOURCE_CONFIG_VERSION = "2026-08-09-adapters-v1";
+const SOURCE_CONFIG_VERSION = "2026-08-09-dynamic-adapters-v2";
 const SEED_VERSION = "4";
 
 const SEED_ITEMS = [
@@ -566,6 +583,67 @@ function extractAnchorTitle(attributes, body, source) {
   return candidates.find((title) => matchesConfiguredPattern(title, source.adapter?.titlePattern) && isRelevantTitle(title, source)) || candidates[0] || "";
 }
 
+function decodeEmbeddedString(value = "") {
+  try {
+    return JSON.parse(`"${value}"`);
+  } catch {
+    return decodeHtml(value)
+      .replace(/\\\//g, "/")
+      .replace(/\\u([0-9a-f]{4})/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+      .replace(/\\(["'])/g, "$1");
+  }
+}
+
+function extractObjectString(objectText, keys) {
+  const names = keys.join("|");
+  const doubleQuoted = objectText.match(new RegExp(`["']?(?:${names})["']?\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, "i"));
+  if (doubleQuoted) return decodeEmbeddedString(doubleQuoted[1]);
+  const singleQuoted = objectText.match(new RegExp(`["']?(?:${names})["']?\\s*:\\s*'((?:\\\\.|[^'\\\\])*)'`, "i"));
+  return singleQuoted ? decodeEmbeddedString(singleQuoted[1]) : "";
+}
+
+function buildListingItem(title, articleUrl, publishedAt, source, parseMethod) {
+  const city = detectCity(title, source.city || null);
+  return {
+    title,
+    articleUrl,
+    publishedAt,
+    sourceName: source.name,
+    sourceUrl: source.url,
+    region: source.region,
+    city,
+    priority: Boolean(city),
+    track: classifyTrack(title, source.track || null),
+    type: classifyType(title),
+    official: source.official,
+    parseMethod
+  };
+}
+
+function parseEmbeddedListings(html, source, seen) {
+  const items = [];
+  const objectPattern = /\{[^{}]{0,2400}\}/g;
+  let match;
+  while ((match = objectPattern.exec(html)) && items.length < 20) {
+    const objectText = match[0];
+    const title = stripHtml(extractObjectString(objectText, ["title", "articleTitle", "newsTitle", "name", "bt"]));
+    if (title.length < 8 || title.length > 150 || !matchesConfiguredPattern(title, source.adapter?.titlePattern) || !isRelevantTitle(title, source)) continue;
+    const href = extractObjectString(objectText, ["url", "href", "link", "articleUrl", "detailUrl", "contentUrl"]);
+    if (!href || /^javascript:/i.test(href)) continue;
+    let articleUrl;
+    try {
+      articleUrl = new URL(href, source.listingUrl || source.url).href;
+    } catch {
+      continue;
+    }
+    if (!/^https?:/.test(articleUrl) || !matchesConfiguredPattern(articleUrl, source.adapter?.linkPattern) || seen.has(articleUrl)) continue;
+    const dateValue = extractObjectString(objectText, ["publishTime", "publishDate", "pubDate", "releaseTime", "date", "time"]);
+    seen.add(articleUrl);
+    items.push(buildListingItem(title, articleUrl, normalizeDate(dateValue), source, "embedded-data"));
+  }
+  return items;
+}
+
 export function parseListing(html, source) {
   const items = [];
   const seen = new Set();
@@ -585,20 +663,9 @@ export function parseListing(html, source) {
     }
     if (!/^https?:/.test(articleUrl) || !matchesConfiguredPattern(articleUrl, source.adapter?.linkPattern) || seen.has(articleUrl)) continue;
     seen.add(articleUrl);
-    items.push({
-      title,
-      articleUrl,
-      publishedAt: extractNearbyDate(html, match.index),
-      sourceName: source.name,
-      sourceUrl: source.url,
-      region: source.region,
-      city: detectCity(title, source.city || null),
-      priority: Boolean(detectCity(title, source.city || null)),
-      track: classifyTrack(title, source.track || null),
-      type: classifyType(title),
-      official: source.official
-    });
+    items.push(buildListingItem(title, articleUrl, extractNearbyDate(html, match.index), source, "html-link"));
   }
+  if (items.length < 20) items.push(...parseEmbeddedListings(html, source, seen).slice(0, 20 - items.length));
   return items;
 }
 
@@ -667,9 +734,20 @@ async function enrichItem(item) {
 
 function sourceEndpoints(source) {
   const endpoints = Array.isArray(source.endpoints) && source.endpoints.length ? source.endpoints : [{ url: source.url, label: "主入口" }];
-  return endpoints.map((endpoint, index) => typeof endpoint === "string"
-    ? { url: endpoint, label: index ? `备用入口 ${index}` : "主入口" }
-    : { ...endpoint, url: endpoint.url, label: endpoint.label || (index ? `备用入口 ${index}` : "主入口") });
+  const currentYear = new Date().getUTCFullYear();
+  return endpoints.flatMap((endpoint, index) => {
+    if (typeof endpoint === "string") return [{ url: endpoint, label: index ? `备用入口 ${index}` : "主入口" }];
+    if (!endpoint.urlTemplate) return [{ ...endpoint, url: endpoint.url, label: endpoint.label || (index ? `备用入口 ${index}` : "主入口") }];
+    const offsets = Array.isArray(endpoint.yearOffsets) && endpoint.yearOffsets.length ? endpoint.yearOffsets : [0];
+    return offsets.map((offset) => {
+      const year = currentYear + Number(offset || 0);
+      return {
+        ...endpoint,
+        url: endpoint.urlTemplate.replaceAll("{year}", String(year)),
+        label: (endpoint.label || `${year}年度专题`).replaceAll("{year}", String(year))
+      };
+    });
+  });
 }
 
 export async function collectSource(source, { lightweight = false } = {}) {
@@ -737,6 +815,7 @@ export async function collectSource(source, { lightweight = false } = {}) {
   return {
     items: output,
     candidates: candidates.length,
+    parseMethod: candidates[0]?.parseMethod || "none",
     endpoint: selected.url,
     endpointLabel: selected.label,
     fallbackUsed: selected.index > 0,
@@ -782,6 +861,7 @@ async function collectAllSources({ lightweight = false } = {}) {
             ok: true,
             found: result.items.length,
             candidates: result.candidates,
+            parseMethod: result.parseMethod,
             endpoint: result.endpoint,
             endpointLabel: result.endpointLabel,
             fallbackUsed: result.fallbackUsed,
@@ -1066,6 +1146,7 @@ export class NewsStore {
         ok: true,
         found: result.items.length,
         candidates: result.candidates,
+        parseMethod: result.parseMethod,
         endpoint: result.endpoint,
         endpointLabel: result.endpointLabel,
         fallbackUsed: result.fallbackUsed,
