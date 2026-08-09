@@ -1,9 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canonicalAnnouncementKey, classifyTrack, classifyType, collectSource, detectCity, extractFields, isAllowedPublicUrl, normalizeBarkUrl, normalizeDate, normalizeSourceInput, parseListing, stripHtml } from "../worker/src/index.js";
+import { canonicalAnnouncementKey, classifyTrack, classifyType, collectSource, detectCity, extractFields, isAllowedPublicUrl, normalizeAiAnalysis, normalizeBarkUrl, normalizeDate, normalizeSourceInput, parseListing, stripHtml } from "../worker/src/index.js";
 
 test("stripHtml removes markup and decodes common entities", () => {
   assert.equal(stripHtml("<p>招录&nbsp;<b>100</b>人 &amp; 报名</p>"), "招录 100 人 & 报名");
+});
+
+test("AI analysis normalization clamps scores and limits untrusted output", () => {
+  const normalized = normalizeAiAnalysis({
+    priority: "unexpected",
+    score: 180.4,
+    summary: "重点公告".repeat(100),
+    reasons: ["报名即将截止", "岗位多", "官方发布", "需要复核", "多余原因"],
+    confidence: -3,
+    isRelevant: false
+  });
+  assert.equal(normalized.priority, "medium");
+  assert.equal(normalized.score, 100);
+  assert.equal(normalized.summary.length, 280);
+  assert.equal(normalized.reasons.length, 4);
+  assert.equal(normalized.confidence, 0);
+  assert.equal(normalized.isRelevant, false);
+});
+
+test("AI analysis keeps priority and score internally consistent", () => {
+  assert.equal(normalizeAiAnalysis({ priority: "medium", score: 0 }).score, 40);
+  assert.equal(normalizeAiAnalysis({ priority: "high", score: 12 }).score, 70);
+  assert.equal(normalizeAiAnalysis({ priority: "urgent", score: 88 }).score, 90);
 });
 
 test("source management blocks local and private network addresses", () => {

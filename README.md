@@ -32,6 +32,8 @@
 
 公告会按地区、招录方向和规范化标题生成去重标识。同一公告被多个官网转载时只保留一个主记录，同时保存所有官方镜像；标题、摘要、报名日期、考试日期或招录人数发生变化时会增加版本号、记录变更字段并生成订阅事件。
 
+每次来源采集完成后，AI 监控会增量分析最多 6 条新增、变更或待重试公告，生成 0–100 重要度评分、摘要、适合人群、资格要求、风险提示和建议动作。高优先级结果会生成提醒事件，并在首页资讯卡片与 Bark 推送中显示。默认使用 Worker 的 Cloudflare Workers AI 绑定，无需额外密钥；AI 结果仅用于初筛，报名资格与时间始终以官方公告为准。
+
 资讯还会写入 `track` 字段，区分“公务员 / 事业单位 / 国家电网 / 烟草系统”。国家电网和烟草系统属于国企招聘方向，不标记为事业编。
 
 ## 一、部署到 Cloudflare
@@ -127,6 +129,18 @@ npx wrangler pages dev public --port 3000
 
 管理接口继续使用 Worker 的 `ADMIN_TOKEN` 鉴权。浏览器只在当前会话中保存输入的管理密钥；服务端还会拒绝本机、内网 IP 和不安全协议，避免手动来源访问内部网络。来源每次变更都会生成修订记录，并触发一次新的增量检测。
 
+后台“AI 招录监控”区域会显示已分析数量、重点公告、最近运行和分析摘要，并支持手动立即运行。AI 使用严格 JSON Schema 输出、限制字段长度，并明确把公告文本视为不可信数据，不允许公告内容改变分析指令。
+
+如需改用 OpenAI Responses API，可配置以下 Worker secret/variable；未设置时继续使用 Workers AI：
+
+```powershell
+npx wrangler secret put OPENAI_API_KEY --config worker/wrangler.jsonc
+npx wrangler secret put AI_PROVIDER --config worker/wrangler.jsonc
+npx wrangler secret put OPENAI_MODEL --config worker/wrangler.jsonc
+```
+
+将 `AI_PROVIDER` 设置为 `openai`。`OPENAI_MODEL` 可省略，项目会使用内置默认模型；请求关闭服务端存储并要求结构化输出。
+
 ## 四、定时更新机制
 
 `worker/wrangler.jsonc` 中的 Cron 为：
@@ -163,6 +177,8 @@ npx wrangler secret put EMAIL_SUBSCRIPTIONS_ENABLED --config worker/wrangler.jso
 | `GET /api/admin/sources/:id/revisions` | 查看来源配置历史（需要管理密钥） |
 | `POST /api/admin/sources/:id/rollback/:revisionId` | 恢复来源历史版本（需要管理密钥） |
 | `GET /api/admin/health` | 连续失败、恢复事件和告警状态（需要管理密钥） |
+| `GET /api/admin/ai` | AI 运行记录和重点公告（需要管理密钥） |
+| `POST /api/admin/ai/run` | 立即运行一批 AI 增量分析（需要管理密钥） |
 | `POST /api/subscriptions` | 创建匿名提醒订阅 |
 | `GET/PUT/DELETE /api/subscriptions/:id` | 读取、修改或删除订阅（需要订阅凭证） |
 | `GET /api/subscriptions/:id/reminders` | 获取未读提醒（需要订阅凭证） |

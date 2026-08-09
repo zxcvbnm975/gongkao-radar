@@ -5,6 +5,7 @@ const state = {
   sources: [],
   reports: [],
   health: null,
+  ai: null,
   editingId: null,
   busy: false
 };
@@ -34,6 +35,9 @@ const els = {
   historyList: document.querySelector("#history-list"),
   healthSummary: document.querySelector("#health-summary"),
   healthEvents: document.querySelector("#health-events"),
+  aiSummary: document.querySelector("#ai-summary"),
+  aiList: document.querySelector("#ai-analysis-list"),
+  runAiButton: document.querySelector("#run-ai-monitor"),
   saveButton: document.querySelector("#save-source"),
   testButton: document.querySelector("#test-source"),
   toast: document.querySelector("#toast")
@@ -41,6 +45,15 @@ const els = {
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
+}
+
+function safeUrl(value) {
+  try {
+    const url = new URL(value, location.origin);
+    return ["http:", "https:"].includes(url.protocol) ? escapeHtml(url.href) : "#";
+  } catch {
+    return "#";
+  }
 }
 
 function showToast(message) {
@@ -129,17 +142,36 @@ function renderHealth() {
   }).join("") : '<div class="health-empty">暂无失败记录</div>';
 }
 
+function renderAiMonitor() {
+  const ai = state.ai;
+  if (!ai) return;
+  const completed = (ai.counts || []).filter((item) => item.status === "complete").reduce((sum, item) => sum + Number(item.count || 0), 0);
+  const important = (ai.counts || []).filter((item) => item.status === "complete" && ["high", "urgent"].includes(item.priority)).reduce((sum, item) => sum + Number(item.count || 0), 0);
+  const lastRun = ai.runs?.[0];
+  els.aiSummary.textContent = ai.enabled
+    ? `${ai.provider === "openai" ? "OpenAI" : "Workers AI"} · 已分析 ${completed} 条 · 重点 ${important} 条${lastRun ? ` · 最近运行 ${new Date(lastRun.startedAt).toLocaleString("zh-CN")}` : ""}`
+    : "AI 服务尚未启用";
+  els.runAiButton.disabled = !ai.enabled;
+  els.aiList.innerHTML = ai.analyses?.length ? ai.analyses.slice(0, 8).map((item) => {
+    const analysis = item.analysis || {};
+    const priorityLabel = { low: "一般", medium: "关注", high: "重点", urgent: "紧急" }[analysis.priority] || "已分析";
+    return `<article class="ai-analysis-item ${escapeHtml(analysis.priority)}"><div class="ai-score"><strong>${escapeHtml(analysis.score ?? "-")}</strong><span>${escapeHtml(priorityLabel)}</span></div><div><a href="${safeUrl(item.articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a><p>${escapeHtml(analysis.summary || "暂无摘要")}</p><small>${escapeHtml(item.city || item.region || "未知地区")} · ${escapeHtml(item.track || "未知分类")} · 置信度 ${Math.round(Number(analysis.confidence || 0) * 100)}%</small></div></article>`;
+  }).join("") : '<div class="health-empty">等待首次 AI 分析</div>';
+}
+
 async function loadDashboard() {
-  const [sourceData, stats, health] = await Promise.all([request("/api/admin/sources"), request("/api/stats"), request("/api/admin/health")]);
+  const [sourceData, stats, health, ai] = await Promise.all([request("/api/admin/sources"), request("/api/stats"), request("/api/admin/health"), request("/api/admin/ai")]);
   state.sources = sourceData.items || [];
   state.reports = stats.lastReport || [];
   state.health = health;
+  state.ai = ai;
   els.authPanel.hidden = true;
   els.dashboard.hidden = false;
   els.status.textContent = "管理权限已验证";
   els.dot.className = "status-dot ready";
   renderSources();
   renderHealth();
+  renderAiMonitor();
 }
 
 function endpointTemplate(endpoint = {}, index = 0) {
@@ -374,6 +406,21 @@ els.historyList.addEventListener("click", async (event) => {
 });
 els.testButton.addEventListener("click", testCurrentSource);
 els.form.addEventListener("submit", (event) => { event.preventDefault(); if (!state.busy) saveSource(); });
+els.runAiButton.addEventListener("click", async () => {
+  if (els.runAiButton.disabled) return;
+  els.runAiButton.disabled = true;
+  els.runAiButton.textContent = "AI 正在分析…";
+  try {
+    const result = await request("/api/admin/ai/run", { method: "POST" });
+    showToast(result.busy ? "已有 AI 监控任务正在运行" : `AI 监控完成：分析 ${result.analyzed} 条${result.failed ? `，失败 ${result.failed} 条` : ""}`);
+    await loadDashboard();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    els.runAiButton.textContent = "立即运行 AI 监控";
+    els.runAiButton.disabled = !state.ai?.enabled;
+  }
+});
 
 if (state.token) {
   els.token.value = state.token;

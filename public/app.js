@@ -399,8 +399,10 @@ function renderNews() {
     const date = newsDateParts(item.publishedAt);
     const deadline = deadlineLabel(item);
     const summary = item.summary || "详细报名条件、职位要求及时间节点请查看官方原文。";
+    const ai = item.aiAnalysis;
+    const aiImportant = ai && ["high", "urgent"].includes(ai.priority);
     return `
-      <article class="news-card ${index === 0 ? "featured" : ""} ${item.priority ? "priority" : ""}">
+      <article class="news-card ${index === 0 ? "featured" : ""} ${item.priority ? "priority" : ""} ${aiImportant ? "ai-important" : ""}">
         ${item.official ? '<span class="verified">✓ 官方来源</span>' : ""}
         <div class="news-date"><strong>${date.day}</strong><span>${date.month}</span></div>
         <div class="news-body">
@@ -411,10 +413,12 @@ function renderNews() {
             <span class="tag">${escapeHtml(item.type)}</span>
             ${item.versionCount > 1 ? `<span class="tag accent">已更新 v${item.versionCount}</span>` : ""}
             ${item.mirrorCount > 1 ? `<span class="tag">${item.mirrorCount} 个官方来源</span>` : ""}
+            ${ai ? `<span class="tag ai-tag">AI ${ai.score} 分 · ${{ low: "一般", medium: "关注", high: "重点", urgent: "紧急" }[ai.priority] || "已分析"}</span>` : ""}
             <time datetime="${escapeHtml(item.publishedAt || "")}">${formatPublished(item.publishedAt)}</time>
           </div>
           <h3><a href="${safeUrl(item.articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a></h3>
           <p class="news-summary">${escapeHtml(summary)}</p>
+          ${ai ? `<div class="ai-insight"><strong>AI 监控摘要</strong><span>${escapeHtml(ai.summary)}</span><small>AI 提取，仅供筛选；请以官方公告为准。</small></div>` : ""}
           <span class="news-source">来源：${escapeHtml(item.sourceName)}</span>
         </div>
         <div class="news-data"><strong>${escapeHtml(deadline.value)}</strong><span>${escapeHtml(deadline.label)}</span></div>
