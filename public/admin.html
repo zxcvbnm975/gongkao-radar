@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="管理公考雷达的官方招录资讯来源。" />
+    <meta name="theme-color" content="#173f35" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/admin.css" />
+    <title>来源管理｜公考雷达</title>
+  </head>
+  <body class="admin-page">
+    <a class="skip-link" href="#admin-main">跳到主要内容</a>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="返回公考雷达首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>公考雷达</span>
+      </a>
+      <nav aria-label="管理导航"><a href="/">资讯首页</a><a class="active" href="/admin.html">来源管理</a></nav>
+      <div class="header-status"><span class="status-dot" id="admin-dot"></span><span id="admin-status">等待验证</span></div>
+    </header>
+
+    <main id="admin-main" class="admin-shell">
+      <section class="admin-intro">
+        <div>
+          <p class="section-kicker">SOURCE MANAGEMENT</p>
+          <h1>官方来源管理</h1>
+          <p>新增、修改、停用或恢复来源。保存前会先检测官网连通性，并预览可识别的公告。</p>
+        </div>
+        <a class="button secondary" href="/">返回资讯首页</a>
+      </section>
+
+      <section class="auth-panel" id="auth-panel">
+        <div>
+          <p class="section-kicker">ADMIN ACCESS</p>
+          <h2>输入管理密钥</h2>
+          <p>密钥仅保留在本次浏览器会话中，关闭页面后自动清除。</p>
+        </div>
+        <form id="auth-form" class="auth-form">
+          <label><span>管理密钥</span><input id="admin-token" type="password" autocomplete="current-password" required placeholder="ADMIN_TOKEN" /></label>
+          <button class="button primary" type="submit">进入管理</button>
+        </form>
+        <p class="form-message" id="auth-message" role="alert"></p>
+      </section>
+
+      <section id="source-dashboard" hidden>
+        <div class="admin-toolbar">
+          <div class="admin-metrics">
+            <article><strong id="metric-total">0</strong><span>全部来源</span></article>
+            <article><strong id="metric-active">0</strong><span>正在监测</span></article>
+            <article><strong id="metric-custom">0</strong><span>手动添加</span></article>
+            <article><strong id="metric-errors">0</strong><span>待处理</span></article>
+          </div>
+          <div class="toolbar-actions">
+            <button class="button secondary" id="reload-sources" type="button">刷新状态</button>
+            <button class="button primary" id="add-source" type="button">新增来源 <span>＋</span></button>
+          </div>
+        </div>
+
+        <div class="source-admin-heading">
+          <div><h2>来源列表</h2><p>系统默认来源可停用或恢复默认；手动来源删除后仍可恢复。</p></div>
+          <label class="admin-filter"><span class="sr-only">筛选来源</span><input id="source-search" type="search" placeholder="搜索来源、地区或分类" /></label>
+        </div>
+        <div id="managed-source-list" class="managed-source-list" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <dialog id="source-dialog" class="source-dialog">
+      <form id="source-form" method="dialog">
+        <div class="dialog-heading">
+          <div><p class="section-kicker">SOURCE EDITOR</p><h2 id="dialog-title">新增来源</h2></div>
+          <button class="icon-button" id="close-dialog" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="form-grid">
+          <label class="span-2"><span>来源名称 *</span><input name="name" required maxlength="60" placeholder="例如：兰州市人力资源和社会保障局" /></label>
+          <label><span>地区 *</span><input name="region" required maxlength="20" placeholder="例如：甘肃" /></label>
+          <label><span>城市</span><input name="city" maxlength="20" placeholder="例如：兰州市" /></label>
+          <label class="span-2"><span>官方网址 *</span><input name="url" type="url" required maxlength="500" placeholder="https://example.gov.cn/" /></label>
+          <label><span>招录方向</span><select name="track"><option>公务员</option><option>事业单位</option><option>国家电网</option><option>烟草系统</option></select></label>
+          <label><span>采集方式</span><select name="mode"><option value="auto">自动采集公告</option><option value="portal">仅展示官方入口</option></select></label>
+          <label><span>来源标识</span><input name="badge" maxlength="2" placeholder="甘" /></label>
+          <label class="check-label"><input name="official" type="checkbox" checked /><span>标记为官方来源</span></label>
+        </div>
+
+        <details class="advanced-settings">
+          <summary>高级解析设置</summary>
+          <div class="form-grid advanced-grid">
+            <label class="span-2"><span>标题关键词规则</span><input name="titlePattern" maxlength="400" placeholder="公务员|事业单位|公开招聘|考试录用" /></label>
+            <label class="span-2"><span>链接匹配规则</span><input name="linkPattern" maxlength="400" placeholder="可留空；仅在需要限制公告链接时填写" /></label>
+          </div>
+        </details>
+
+        <section class="endpoint-editor">
+          <div class="endpoint-heading"><div><h3>官网入口</h3><p>按顺序尝试；可以使用上移、下移调整备用入口优先级。</p></div><button class="text-button" id="add-endpoint" type="button">＋ 添加入口</button></div>
+          <div id="endpoint-list"></div>
+        </section>
+
+        <section class="test-panel" id="test-panel" hidden>
+          <div class="test-heading"><strong id="test-title">检测结果</strong><span id="test-duration"></span></div>
+          <p id="test-summary"></p>
+          <div id="test-preview" class="test-preview"></div>
+        </section>
+
+        <p class="form-message" id="source-form-message" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="button secondary" id="test-source" type="button">测试并预览</button>
+          <button class="button primary" id="save-source" type="submit">测试后保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/config.js" onerror="this.remove()"></script>
+    <script type="module" src="/admin.js"></script>
+  </body>
+</html>

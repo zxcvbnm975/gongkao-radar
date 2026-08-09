@@ -1,4 +1,4 @@
-const SOURCES = [
+const DEFAULT_SOURCES = [
   {
     id: "scs",
     name: "国家公务员局",
@@ -214,8 +214,104 @@ const INITIAL_SOURCE_BATCH_SIZE = 6;
 const INITIAL_SOURCE_TIMEOUT_MS = 3500;
 const REFRESH_LEASE_MS = 3 * 60 * 1000;
 const SOURCE_ALARM_STRATEGY = "source-alarm-v1";
-const SOURCE_CONFIG_VERSION = "2026-08-09-dynamic-adapters-v3";
+const SOURCE_CONFIG_VERSION = "2026-08-09-managed-sources-v1";
 const SEED_VERSION = "4";
+const SOURCE_TRACKS = new Set(["公务员", "事业单位", "国家电网", "烟草系统"]);
+
+function validatePattern(value, label) {
+  const pattern = String(value || "").trim();
+  if (!pattern) return "";
+  if (pattern.length > 400) throw new Error(`${label}不能超过 400 个字符`);
+  try {
+    new RegExp(pattern, "i");
+  } catch {
+    throw new Error(`${label}不是有效的匹配规则`);
+  }
+  return pattern;
+}
+
+export function isAllowedPublicUrl(value, { template = false } = {}) {
+  const raw = String(value || "").trim();
+  if (!raw || raw.length > 500) return false;
+  const candidate = template ? raw.replaceAll("{year}", String(new Date().getUTCFullYear())) : raw;
+  let parsed;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return false;
+  }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return false;
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local") || !hostname.includes(".")) return false;
+  if (hostname.includes(":")) return false;
+  const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) return true;
+  const octets = ipv4.slice(1).map(Number);
+  if (octets.some((part) => part > 255)) return false;
+  const [a, b] = octets;
+  return !(a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224);
+}
+
+function cleanText(value, label, max, { required = false } = {}) {
+  const text = String(value || "").trim();
+  if (required && !text) throw new Error(`请填写${label}`);
+  if (text.length > max) throw new Error(`${label}不能超过 ${max} 个字符`);
+  return text;
+}
+
+export function normalizeSourceInput(input, { id, builtIn = false } = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("来源配置格式不正确");
+  const name = cleanText(input.name, "来源名称", 60, { required: true });
+  const region = cleanText(input.region, "地区", 20, { required: true });
+  const city = cleanText(input.city, "城市", 20);
+  const badge = cleanText(input.badge || name.slice(0, 1), "来源标识", 2) || "源";
+  const track = SOURCE_TRACKS.has(input.track) ? input.track : "公务员";
+  const mode = input.mode === "portal" ? "portal" : undefined;
+  const url = cleanText(input.url, "官方网址", 500, { required: true });
+  if (!isAllowedPublicUrl(url)) throw new Error("官方网址必须是可公开访问的 HTTP/HTTPS 地址");
+
+  const rawEndpoints = Array.isArray(input.endpoints) && input.endpoints.length ? input.endpoints : [{ url, label: "主入口" }];
+  if (rawEndpoints.length > 8) throw new Error("每个来源最多配置 8 个入口");
+  const endpoints = rawEndpoints.map((endpoint, index) => {
+    const rawUrl = cleanText(endpoint?.urlTemplate || endpoint?.url, `入口 ${index + 1} 地址`, 500, { required: true });
+    const template = rawUrl.includes("{year}");
+    if (!isAllowedPublicUrl(rawUrl, { template })) throw new Error(`入口 ${index + 1} 必须是可公开访问的 HTTP/HTTPS 地址`);
+    const normalized = {
+      label: cleanText(endpoint?.label || (index ? `备用入口 ${index}` : "主入口"), `入口 ${index + 1} 名称`, 60),
+      titlePattern: validatePattern(endpoint?.titlePattern, `入口 ${index + 1} 标题规则`),
+      linkPattern: validatePattern(endpoint?.linkPattern, `入口 ${index + 1} 链接规则`),
+      dynamicPortal: Boolean(endpoint?.dynamicPortal)
+    };
+    if (template) {
+      normalized.urlTemplate = rawUrl;
+      const offsets = Array.isArray(endpoint?.yearOffsets) ? endpoint.yearOffsets.map(Number).filter(Number.isFinite).slice(0, 4) : [1, 0];
+      normalized.yearOffsets = offsets.length ? offsets : [0];
+    } else {
+      normalized.url = rawUrl;
+    }
+    return Object.fromEntries(Object.entries(normalized).filter(([, value]) => value !== "" && value !== false));
+  });
+
+  const source = {
+    id: id || cleanText(input.id, "来源编号", 80) || `custom-${crypto.randomUUID()}`,
+    name,
+    region,
+    badge,
+    url,
+    track,
+    endpoints,
+    adapter: {
+      id: cleanText(input.adapter?.id || id || "custom", "适配器编号", 80),
+      titlePattern: validatePattern(input.adapter?.titlePattern || input.titlePattern || "公务员|事业单位|招聘|招录|考试|报名|公告|公示|选调|遴选", "标题规则"),
+      linkPattern: validatePattern(input.adapter?.linkPattern || input.linkPattern, "链接规则")
+    },
+    official: input.official !== false
+  };
+  if (city) source.city = city;
+  if (mode) source.mode = mode;
+  if (builtIn) source.builtIn = true;
+  return source;
+}
 
 const SEED_ITEMS = [
   {
@@ -685,15 +781,24 @@ async function fetchText(url, timeoutMs = 12000, attempts = 2) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        redirect: "follow",
-        headers: {
-          Accept: "text/html,application/xhtml+xml",
-          "Accept-Language": "zh-CN,zh;q=0.9",
-          "User-Agent": "Mozilla/5.0 (compatible; GongkaoRadar/1.1; +official-information-monitor)"
-        }
-      });
+      let currentUrl = url;
+      let response;
+      for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
+        if (!isAllowedPublicUrl(currentUrl)) throw new Error("目标地址不是可公开访问的网址");
+        response = await fetch(currentUrl, {
+          signal: controller.signal,
+          redirect: "manual",
+          headers: {
+            Accept: "text/html,application/xhtml+xml",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "User-Agent": "Mozilla/5.0 (compatible; GongkaoRadar/1.1; +official-information-monitor)"
+          }
+        });
+        if (![301, 302, 303, 307, 308].includes(response.status)) break;
+        const location = response.headers.get("Location");
+        if (!location || redirectCount === 5) throw new Error("官网重定向次数过多");
+        currentUrl = new URL(location, currentUrl).href;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.text();
     } catch (error) {
@@ -840,15 +945,33 @@ async function ensureSeeded(env) {
   });
 }
 
+async function ensureSourcesSeeded(env) {
+  return getStore(env).fetch("https://store.internal/sources/seed", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      items: DEFAULT_SOURCES.map((source) => normalizeSourceInput(source, { id: source.id, builtIn: true })),
+      version: SOURCE_CONFIG_VERSION
+    })
+  });
+}
+
+async function getManagedSources(env, { includeInactive = false } = {}) {
+  await ensureSourcesSeeded(env);
+  const response = await getStore(env).fetch(`https://store.internal/sources${includeInactive ? "?all=1" : ""}`);
+  if (!response.ok) throw new Error("读取来源配置失败");
+  return response.json();
+}
+
 async function acquireRefreshLease(env) {
   const response = await getStore(env).fetch("https://store.internal/refresh-lease", { method: "POST" });
   return response.json();
 }
 
-async function collectAllSources({ lightweight = false } = {}) {
+async function collectAllSources(sources, { lightweight = false } = {}) {
   const reportById = new Map();
   const collected = [];
-  const automaticSources = SOURCES.filter((source) => source.mode !== "portal");
+  const automaticSources = sources.filter((source) => source.mode !== "portal");
   const batchSize = lightweight ? INITIAL_SOURCE_BATCH_SIZE : SOURCE_BATCH_SIZE;
   for (let index = 0; index < automaticSources.length; index += batchSize) {
     const batch = automaticSources.slice(index, index + batchSize);
@@ -900,7 +1023,7 @@ async function collectAllSources({ lightweight = false } = {}) {
     }
   }
 
-  for (const source of SOURCES.filter((item) => item.mode === "portal")) {
+  for (const source of sources.filter((item) => item.mode === "portal")) {
     reportById.set(source.id, {
       sourceId: source.id,
       source: source.name,
@@ -912,21 +1035,22 @@ async function collectAllSources({ lightweight = false } = {}) {
     });
   }
 
-  const report = SOURCES.map((source) => reportById.get(source.id));
+  const report = sources.map((source) => reportById.get(source.id));
   return { collected, report };
 }
 
 async function refreshAll(env, { lease: existingLease = null, lightweight = false } = {}) {
   await ensureSeeded(env);
+  const sourceSet = await getManagedSources(env);
   const lease = existingLease?.granted ? existingLease : await acquireRefreshLease(env);
   if (!lease.granted) return { ok: true, skipped: true, reason: "已有采集任务正在运行" };
 
-  const { collected, report } = await collectAllSources({ lightweight });
+  const { collected, report } = await collectAllSources(sourceSet.items, { lightweight });
   const syncedAt = new Date().toISOString();
   const response = await getStore(env).fetch("https://store.internal/ingest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items: collected, syncedAt, startedAt: lease.startedAt, report, sourceConfigVersion: SOURCE_CONFIG_VERSION })
+    body: JSON.stringify({ items: collected, syncedAt, startedAt: lease.startedAt, report, sourceConfigVersion: sourceSet.version })
   });
   const stored = await response.json();
   return { ...stored, report };
@@ -938,11 +1062,18 @@ function corsHeaders(request, env) {
   const selected = allowed.includes("*") || allowed.includes(origin) ? origin : allowed[0];
   return {
     "Access-Control-Allow-Origin": selected || "null",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin"
   };
+}
+
+function adminAuthError(request, env) {
+  if (!env.ADMIN_TOKEN) return json({ error: "管理密钥尚未配置" }, { status: 503 }, request, env);
+  const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+  if (token !== env.ADMIN_TOKEN) return json({ error: "管理密钥不正确" }, { status: 401 }, request, env);
+  return null;
 }
 
 function json(data, init = {}, request = new Request("https://internal"), env = {}) {
@@ -962,19 +1093,124 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request, env) });
 
     if (url.pathname === "/" || url.pathname === "/api/health") {
-      return json({ ok: true, service: "gongkao-radar-api", now: new Date().toISOString() }, {}, request, env);
+      return json({ ok: true, service: "gongkao-radar-api", adminConfigured: Boolean(env.ADMIN_TOKEN), now: new Date().toISOString() }, {}, request, env);
     }
 
     if (url.pathname === "/api/sources" && request.method === "GET") {
-      return json({ items: SOURCES }, { headers: { "Cache-Control": "public, max-age=3600" } }, request, env);
+      const sourceSet = await getManagedSources(env);
+      return json(sourceSet, { headers: { "Cache-Control": "public, max-age=60" } }, request, env);
+    }
+
+    if (url.pathname === "/api/admin/sources" && request.method === "GET") {
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
+      return json(await getManagedSources(env, { includeInactive: true }), {}, request, env);
+    }
+
+    if (url.pathname === "/api/admin/sources/test" && request.method === "POST") {
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
+      try {
+        const source = normalizeSourceInput(await request.json());
+        if (source.mode === "portal") {
+          const started = Date.now();
+          const result = await collectSource(source, { lightweight: true });
+          return json({
+            ok: true,
+            accessible: true,
+            mode: "portal",
+            endpoint: result.endpoint,
+            endpointLabel: result.endpointLabel,
+            fallbackUsed: result.fallbackUsed,
+            attemptedEndpoints: result.attemptedEndpoints,
+            preview: [],
+            durationMs: Date.now() - started
+          }, {}, request, env);
+        }
+        const started = Date.now();
+        const result = await collectSource(source, { lightweight: true });
+        return json({
+          ok: true,
+          accessible: true,
+          mode: result.dynamicPortal ? "dynamic" : "automatic",
+          endpoint: result.endpoint,
+          endpointLabel: result.endpointLabel,
+          fallbackUsed: result.fallbackUsed,
+          candidates: result.candidates,
+          preview: result.items.slice(0, 5),
+          attemptedEndpoints: result.attemptedEndpoints,
+          durationMs: Date.now() - started
+        }, {}, request, env);
+      } catch (error) {
+        return json({
+          ok: false,
+          accessible: false,
+          error: error instanceof Error ? error.message : String(error),
+          attemptedEndpoints: error?.attemptedEndpoints || []
+        }, { status: 422 }, request, env);
+      }
+    }
+
+    if (url.pathname === "/api/admin/sources" && request.method === "POST") {
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
+      try {
+        const source = normalizeSourceInput(await request.json());
+        const response = await getStore(env).fetch("https://store.internal/sources", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source })
+        });
+        return json(await response.json(), { status: response.status }, request, env);
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 }, request, env);
+      }
+    }
+
+    const managedSourceMatch = url.pathname.match(/^\/api\/admin\/sources\/([^/]+)$/);
+    if (managedSourceMatch && ["PUT", "DELETE"].includes(request.method)) {
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
+      const id = decodeURIComponent(managedSourceMatch[1]);
+      try {
+        let body = null;
+        if (request.method === "PUT") {
+          const currentResponse = await getStore(env).fetch(`https://store.internal/sources/${encodeURIComponent(id)}`);
+          if (!currentResponse.ok) return json({ error: "来源不存在" }, { status: 404 }, request, env);
+          const current = await currentResponse.json();
+          body = { source: normalizeSourceInput(await request.json(), { id, builtIn: current.item.builtIn }), enabled: current.item.enabled };
+        }
+        const response = await getStore(env).fetch(`https://store.internal/sources/${encodeURIComponent(id)}`, {
+          method: request.method,
+          headers: { "Content-Type": "application/json" },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        return json(await response.json(), { status: response.status }, request, env);
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 }, request, env);
+      }
+    }
+
+    const sourceActionMatch = url.pathname.match(/^\/api\/admin\/sources\/([^/]+)\/(enable|disable|restore|reset)$/);
+    if (sourceActionMatch && request.method === "POST") {
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
+      const [, rawId, action] = sourceActionMatch;
+      const response = await getStore(env).fetch(`https://store.internal/sources/${encodeURIComponent(decodeURIComponent(rawId))}/${action}`, { method: "POST" });
+      return json(await response.json(), { status: response.status }, request, env);
     }
 
     if (url.pathname === "/api/stats" && request.method === "GET") {
       await ensureSeeded(env);
+      const sourceSet = await getManagedSources(env);
       const response = await getStore(env).fetch("https://store.internal/stats");
       const stats = await response.json();
-      if ((!stats.syncedAt || stats.sourceConfigVersion !== SOURCE_CONFIG_VERSION) && !stats.collecting) {
-        const scheduledResponse = await getStore(env).fetch("https://store.internal/schedule-refresh", { method: "POST" });
+      if ((!stats.syncedAt || stats.sourceConfigVersion !== sourceSet.version) && !stats.collecting) {
+        const scheduledResponse = await getStore(env).fetch("https://store.internal/schedule-refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sources: sourceSet.items, sourceConfigVersion: sourceSet.version })
+        });
         const scheduled = await scheduledResponse.json();
         if (scheduled.granted) {
           stats.collecting = true;
@@ -999,9 +1235,8 @@ export default {
     }
 
     if (url.pathname === "/api/refresh" && request.method === "POST") {
-      if (!env.ADMIN_TOKEN) return json({ error: "ADMIN_TOKEN 尚未配置" }, { status: 503 }, request, env);
-      const token = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
-      if (token !== env.ADMIN_TOKEN) return json({ error: "无权执行刷新" }, { status: 401 }, request, env);
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
       const result = await refreshAll(env);
       return json(result, {}, request, env);
     }
@@ -1042,6 +1277,25 @@ export class NewsStore {
         CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at DESC);
         CREATE INDEX IF NOT EXISTS idx_articles_region ON articles(region);
         CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS sources (
+          id TEXT PRIMARY KEY,
+          config_json TEXT NOT NULL,
+          built_in INTEGER NOT NULL DEFAULT 0,
+          customized INTEGER NOT NULL DEFAULT 0,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          deleted_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sources_active ON sources(enabled, deleted_at);
+        CREATE TABLE IF NOT EXISTS source_revisions (
+          revision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          config_json TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_source_revisions_source ON source_revisions(source_id, revision_id DESC);
       `);
       const articleColumns = this.ctx.storage.sql.exec("PRAGMA table_info(articles)").toArray().map((column) => column.name);
       if (!articleColumns.includes("city")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN city TEXT");
@@ -1072,6 +1326,48 @@ export class NewsStore {
       official: Boolean(row.official),
       fetchedAt: row.fetched_at
     };
+  }
+
+  rowToSource(row) {
+    return {
+      ...JSON.parse(row.config_json),
+      builtIn: Boolean(row.built_in),
+      customized: Boolean(row.customized),
+      enabled: Boolean(row.enabled),
+      deletedAt: row.deleted_at || null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  sourceVersion() {
+    return this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'source_revision'").toArray()[0]?.value || SOURCE_CONFIG_VERSION;
+  }
+
+  bumpSourceVersion() {
+    const version = `${new Date().toISOString()}-${crypto.randomUUID().slice(0, 8)}`;
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('source_revision', ?)", version);
+    return version;
+  }
+
+  recordSourceRevision(id, action, config = null) {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO source_revisions(source_id, action, config_json, created_at) VALUES (?, ?, ?, ?)",
+      id,
+      action,
+      config ? JSON.stringify(config) : null,
+      new Date().toISOString()
+    );
+  }
+
+  managedSources({ all = false } = {}) {
+    this.ctx.storage.sql.exec("DELETE FROM sources WHERE built_in = 0 AND deleted_at IS NOT NULL AND julianday(deleted_at) < julianday('now', '-30 days')");
+    const rows = this.ctx.storage.sql.exec(
+      all
+        ? "SELECT * FROM sources ORDER BY deleted_at IS NOT NULL, enabled DESC, built_in DESC, created_at ASC"
+        : "SELECT * FROM sources WHERE enabled = 1 AND deleted_at IS NULL ORDER BY built_in DESC, created_at ASC"
+    ).toArray();
+    return { items: rows.map((row) => this.rowToSource(row)), version: this.sourceVersion() };
   }
 
   upsert(items) {
@@ -1133,7 +1429,9 @@ export class NewsStore {
     const strategy = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_strategy'").toArray()[0]?.value;
     if (strategy !== SOURCE_ALARM_STRATEGY) return;
 
-    const automaticSources = SOURCES.filter((source) => source.mode !== "portal");
+    const refreshSourcesValue = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_sources'").toArray()[0]?.value;
+    const refreshSources = refreshSourcesValue ? JSON.parse(refreshSourcesValue) : this.managedSources().items;
+    const automaticSources = refreshSources.filter((source) => source.mode !== "portal");
     const indexValue = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_source_index'").toArray()[0]?.value;
     const index = Math.max(Number(indexValue) || 0, 0);
     const source = automaticSources[index];
@@ -1189,7 +1487,7 @@ export class NewsStore {
     }
 
     const checkedAt = new Date().toISOString();
-    const portalReports = SOURCES.filter((item) => item.mode === "portal").map((item) => ({
+    const portalReports = refreshSources.filter((item) => item.mode === "portal").map((item) => ({
       sourceId: item.id,
       source: item.name,
       status: "portal",
@@ -1199,18 +1497,129 @@ export class NewsStore {
       checkedAt
     }));
     const reportsById = new Map([...nextReport, ...portalReports].map((report) => [report.sourceId, report]));
-    const report = SOURCES.map((item) => reportsById.get(item.id));
+    const report = refreshSources.map((item) => reportsById.get(item.id));
     const syncedAt = new Date().toISOString();
     const scheduledVersion = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_config_version'").toArray()[0]?.value || "unknown";
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('synced_at', ?)", syncedAt);
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('last_report', ?)", JSON.stringify(report));
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('source_config_version', ?)", scheduledVersion);
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", syncedAt);
-    this.ctx.storage.sql.exec("DELETE FROM metadata WHERE key IN ('pending_report', 'refresh_source_index')");
+    this.ctx.storage.sql.exec("DELETE FROM metadata WHERE key IN ('pending_report', 'refresh_source_index', 'refresh_sources')");
   }
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/sources/seed" && request.method === "POST") {
+      const body = await request.json();
+      const currentVersion = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'source_seed_version'").toArray()[0]?.value;
+      let changed = 0;
+      if (currentVersion !== body.version) {
+        const now = new Date().toISOString();
+        for (const source of Array.isArray(body.items) ? body.items : []) {
+          const existing = this.ctx.storage.sql.exec("SELECT customized FROM sources WHERE id = ?", source.id).toArray()[0];
+          if (!existing) {
+            this.ctx.storage.sql.exec(
+              "INSERT INTO sources(id, config_json, built_in, customized, enabled, deleted_at, created_at, updated_at) VALUES (?, ?, 1, 0, 1, NULL, ?, ?)",
+              source.id,
+              JSON.stringify(source),
+              now,
+              now
+            );
+            this.recordSourceRevision(source.id, "seed", source);
+            changed += 1;
+          } else if (!existing.customized) {
+            this.ctx.storage.sql.exec("UPDATE sources SET config_json = ?, built_in = 1, updated_at = ? WHERE id = ?", JSON.stringify(source), now, source.id);
+            this.recordSourceRevision(source.id, "seed-update", source);
+            changed += 1;
+          }
+        }
+        this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('source_seed_version', ?)", body.version || "1");
+        if (changed) this.bumpSourceVersion();
+      }
+      return Response.json({ ok: true, changed, ...this.managedSources() });
+    }
+
+    if (url.pathname === "/sources" && request.method === "GET") {
+      return Response.json(this.managedSources({ all: url.searchParams.get("all") === "1" }));
+    }
+
+    if (url.pathname === "/sources" && request.method === "POST") {
+      const { source } = await request.json();
+      if (!source?.id) return Response.json({ error: "来源配置不完整" }, { status: 400 });
+      const exists = this.ctx.storage.sql.exec("SELECT id FROM sources WHERE id = ?", source.id).toArray()[0];
+      if (exists) return Response.json({ error: "来源编号已存在" }, { status: 409 });
+      const now = new Date().toISOString();
+      this.ctx.storage.sql.exec(
+        "INSERT INTO sources(id, config_json, built_in, customized, enabled, deleted_at, created_at, updated_at) VALUES (?, ?, 0, 1, 1, NULL, ?, ?)",
+        source.id,
+        JSON.stringify(source),
+        now,
+        now
+      );
+      this.recordSourceRevision(source.id, "create", source);
+      const version = this.bumpSourceVersion();
+      return Response.json({ ok: true, item: this.rowToSource(this.ctx.storage.sql.exec("SELECT * FROM sources WHERE id = ?", source.id).one()), version }, { status: 201 });
+    }
+
+    const sourceMatch = url.pathname.match(/^\/sources\/([^/]+)$/);
+    if (sourceMatch) {
+      const id = decodeURIComponent(sourceMatch[1]);
+      const row = this.ctx.storage.sql.exec("SELECT * FROM sources WHERE id = ?", id).toArray()[0];
+      if (!row) return Response.json({ error: "来源不存在" }, { status: 404 });
+      if (request.method === "GET") return Response.json({ item: this.rowToSource(row), version: this.sourceVersion() });
+      if (request.method === "PUT") {
+        const body = await request.json();
+        const source = body.source;
+        const now = new Date().toISOString();
+        this.ctx.storage.sql.exec(
+          "UPDATE sources SET config_json = ?, customized = 1, enabled = ?, deleted_at = NULL, updated_at = ? WHERE id = ?",
+          JSON.stringify(source),
+          body.enabled === false ? 0 : 1,
+          now,
+          id
+        );
+        this.recordSourceRevision(id, "update", source);
+        const version = this.bumpSourceVersion();
+        return Response.json({ ok: true, item: this.rowToSource(this.ctx.storage.sql.exec("SELECT * FROM sources WHERE id = ?", id).one()), version });
+      }
+      if (request.method === "DELETE") {
+        const now = new Date().toISOString();
+        if (row.built_in) {
+          this.ctx.storage.sql.exec("UPDATE sources SET enabled = 0, updated_at = ? WHERE id = ?", now, id);
+          this.recordSourceRevision(id, "disable", this.rowToSource(row));
+        } else {
+          this.ctx.storage.sql.exec("UPDATE sources SET enabled = 0, deleted_at = ?, updated_at = ? WHERE id = ?", now, now, id);
+          this.recordSourceRevision(id, "delete", this.rowToSource(row));
+        }
+        const version = this.bumpSourceVersion();
+        return Response.json({ ok: true, action: row.built_in ? "disabled" : "deleted", version });
+      }
+    }
+
+    const sourceActionMatch = url.pathname.match(/^\/sources\/([^/]+)\/(enable|disable|restore|reset)$/);
+    if (sourceActionMatch && request.method === "POST") {
+      const id = decodeURIComponent(sourceActionMatch[1]);
+      const action = sourceActionMatch[2];
+      const row = this.ctx.storage.sql.exec("SELECT * FROM sources WHERE id = ?", id).toArray()[0];
+      if (!row) return Response.json({ error: "来源不存在" }, { status: 404 });
+      const now = new Date().toISOString();
+      if (action === "reset") {
+        const defaultSource = DEFAULT_SOURCES.find((source) => source.id === id);
+        if (!row.built_in || !defaultSource) return Response.json({ error: "只有系统默认来源可以恢复默认配置" }, { status: 400 });
+        const normalizedDefault = normalizeSourceInput(defaultSource, { id, builtIn: true });
+        this.ctx.storage.sql.exec("UPDATE sources SET config_json = ?, customized = 0, enabled = 1, deleted_at = NULL, updated_at = ? WHERE id = ?", JSON.stringify(normalizedDefault), now, id);
+        this.recordSourceRevision(id, "reset", normalizedDefault);
+      } else if (action === "disable") {
+        this.ctx.storage.sql.exec("UPDATE sources SET enabled = 0, updated_at = ? WHERE id = ?", now, id);
+        this.recordSourceRevision(id, "disable", this.rowToSource(row));
+      } else {
+        this.ctx.storage.sql.exec("UPDATE sources SET enabled = 1, deleted_at = NULL, updated_at = ? WHERE id = ?", now, id);
+        this.recordSourceRevision(id, action, this.rowToSource(row));
+      }
+      const version = this.bumpSourceVersion();
+      return Response.json({ ok: true, item: this.rowToSource(this.ctx.storage.sql.exec("SELECT * FROM sources WHERE id = ?", id).one()), version });
+    }
 
     if ((url.pathname === "/seed" || url.pathname === "/ingest") && request.method === "POST") {
       const body = await request.json();
@@ -1247,6 +1656,7 @@ export class NewsStore {
     }
 
     if (url.pathname === "/schedule-refresh" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
       const now = Date.now();
       const started = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray()[0]?.value || null;
       const finished = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_finished_at'").toArray()[0]?.value || null;
@@ -1258,9 +1668,21 @@ export class NewsStore {
       const nextStartedAt = new Date(now).toISOString();
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", nextStartedAt);
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_strategy', ?)", SOURCE_ALARM_STRATEGY);
-      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_config_version', ?)", SOURCE_CONFIG_VERSION);
+      const refreshSources = Array.isArray(body.sources) ? body.sources : this.managedSources().items;
+      const refreshConfigVersion = body.sourceConfigVersion || this.sourceVersion();
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_config_version', ?)", refreshConfigVersion);
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_sources', ?)", JSON.stringify(refreshSources));
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('pending_report', '[]')");
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_source_index', '0')");
+      if (!refreshSources.some((source) => source.mode !== "portal")) {
+        const checkedAt = new Date().toISOString();
+        const report = refreshSources.map((source) => ({ sourceId: source.id, source: source.name, status: "portal", ok: true, found: 0, durationMs: 0, checkedAt }));
+        this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('last_report', ?)", JSON.stringify(report));
+        this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('source_config_version', ?)", refreshConfigVersion);
+        this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", checkedAt);
+        this.ctx.storage.sql.exec("DELETE FROM metadata WHERE key IN ('pending_report', 'refresh_source_index', 'refresh_sources')");
+        return Response.json({ granted: true, startedAt: nextStartedAt, completed: true });
+      }
       await this.ctx.storage.setAlarm(now + 100);
       return Response.json({ granted: true, startedAt: nextStartedAt });
     }

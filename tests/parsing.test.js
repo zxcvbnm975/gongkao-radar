@@ -1,9 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyTrack, classifyType, collectSource, detectCity, extractFields, normalizeDate, parseListing, stripHtml } from "../worker/src/index.js";
+import { classifyTrack, classifyType, collectSource, detectCity, extractFields, isAllowedPublicUrl, normalizeDate, normalizeSourceInput, parseListing, stripHtml } from "../worker/src/index.js";
 
 test("stripHtml removes markup and decodes common entities", () => {
   assert.equal(stripHtml("<p>招录&nbsp;<b>100</b>人 &amp; 报名</p>"), "招录 100 人 & 报名");
+});
+
+test("source management blocks local and private network addresses", () => {
+  assert.equal(isAllowedPublicUrl("https://www.gansu.gov.cn/"), true);
+  assert.equal(isAllowedPublicUrl("http://127.0.0.1/admin"), false);
+  assert.equal(isAllowedPublicUrl("http://192.168.1.20/list"), false);
+  assert.equal(isAllowedPublicUrl("http://localhost:8787/"), false);
+});
+
+test("source management normalizes ordered fallback endpoints", () => {
+  const source = normalizeSourceInput({
+    name: "兰州市人社局",
+    region: "甘肃",
+    city: "兰州市",
+    url: "https://example.gov.cn/",
+    track: "事业单位",
+    endpoints: [
+      { label: "主入口", url: "https://example.gov.cn/notices/" },
+      { label: "年度专题", urlTemplate: "https://example.gov.cn/{year}/", yearOffsets: [1, 0] }
+    ],
+    adapter: { titlePattern: "事业单位|公开招聘" }
+  }, { id: "lanzhou-institutions" });
+  assert.equal(source.id, "lanzhou-institutions");
+  assert.equal(source.track, "事业单位");
+  assert.equal(source.endpoints.length, 2);
+  assert.equal(source.endpoints[1].urlTemplate, "https://example.gov.cn/{year}/");
 });
 
 test("classifyType identifies common notice categories", () => {
