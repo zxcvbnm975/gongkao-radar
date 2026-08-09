@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canonicalAnnouncementKey, classifyTrack, classifyType, collectSource, detectCity, extractFields, isAllowedPublicUrl, normalizeDate, normalizeSourceInput, parseListing, stripHtml } from "../worker/src/index.js";
+import { canonicalAnnouncementKey, classifyTrack, classifyType, collectSource, detectCity, extractFields, isAllowedPublicUrl, normalizeBarkUrl, normalizeDate, normalizeSourceInput, parseListing, stripHtml } from "../worker/src/index.js";
 
 test("stripHtml removes markup and decodes common entities", () => {
   assert.equal(stripHtml("<p>招录&nbsp;<b>100</b>人 &amp; 报名</p>"), "招录 100 人 & 报名");
@@ -36,6 +36,13 @@ test("announcement deduplication ignores punctuation and spacing", () => {
   const first = canonicalAnnouncementKey({ title: "关于 2027 年事业单位公开招聘公告", region: "甘肃", track: "事业单位" });
   const second = canonicalAnnouncementKey({ title: "关于2027年事业单位公开招聘《公告》", region: "甘肃", track: "事业单位" });
   assert.equal(first, second);
+});
+
+test("Bark delivery accepts only the official HTTPS endpoint", () => {
+  assert.equal(normalizeBarkUrl("abcDEF_123456"), "https://api.day.app/abcDEF_123456");
+  assert.equal(normalizeBarkUrl("https://api.day.app/abcDEF_123456/test"), "https://api.day.app/abcDEF_123456");
+  assert.throws(() => normalizeBarkUrl("http://api.day.app/abcDEF_123456"));
+  assert.throws(() => normalizeBarkUrl("https://example.com/abcDEF_123456"));
 });
 
 test("classifyType identifies common notice categories", () => {

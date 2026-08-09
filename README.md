@@ -28,7 +28,7 @@
 
 甘肃重点城市资讯会写入 `city` 字段并设置 `priority`，在首页优先展示。前端可用“金昌市 / 武威市 / 张掖市”快捷按钮单独筛选；省级公告中只要正文或标题出现这些城市，也会自动归入对应重点城市。
 
-首页“订阅提醒”支持按金昌、武威、张掖、招录方向和关键词创建匿名订阅。订阅条件保存在 Durable Object，浏览器仅保存该订阅的随机凭证；每次打开网站时会检查新公告、公告内容变更和报名截止提醒，并可选择调用浏览器通知。当前不依赖短信或邮件第三方服务，因此浏览器完全关闭时不会后台推送。
+首页“订阅提醒”支持按金昌、武威、张掖、招录方向和关键词创建匿名订阅。订阅条件保存在 Durable Object，浏览器仅保存该订阅的随机凭证；每次打开网站时会检查新公告、公告内容变更和报名截止提醒。用户可以启用浏览器通知、Bark 后台推送，或在部署方配置 Resend 后启用邮件提醒。每次后台投递都会记录状态，失败任务按退避策略最多重试 3 次。
 
 公告会按地区、招录方向和规范化标题生成去重标识。同一公告被多个官网转载时只保留一个主记录，同时保存所有官方镜像；标题、摘要、报名日期、考试日期或招录人数发生变化时会增加版本号、记录变更字段并生成订阅事件。
 
@@ -106,7 +106,7 @@ npx wrangler pages dev public --port 3000
 
 ## 三、来源运行状态
 
-首次打开网页时，如果系统还没有完成过真实采集，Worker 会自动启动一次轻量来源检测：只读取列表页、单次快速探测并尽快生成状态；每日定时任务再执行失败重试并提取最新公告详情。网页“官方来源”区域会显示每个来源的当前状态：检测中、正常、暂无新公告、访问失败或动态平台官方入口。
+首次打开网页时，如果系统还没有完成过真实采集，Worker 会自动启动一次轻量来源检测。每个失败来源会进行两次指数退避重试；连续两轮失败后升级为告警，恢复后生成恢复记录。管理后台会显示来源健康事件和连续失败数量。
 
 `GET /api/stats` 会返回 `collecting`、`refreshStartedAt`、`refreshFinishedAt` 和 `lastReport`。首次检测通过 Durable Object 后台闹钟逐个来源执行并增量保存，不依赖网页请求保持连接；系统使用采集租约避免定时任务、首次检测和手工刷新重复运行。单个来源失败不会中断其他来源，失败来源会在下次定时任务中重新检测。
 
@@ -123,6 +123,7 @@ npx wrangler pages dev public --port 3000
 - 软删除手动添加的来源，并在 30 天内恢复；
 - 查看最近一次采集状态和错误原因。
 - 查看来源配置修改历史，并将来源一键恢复到任意有效历史版本。
+- 查看连续失败、恢复记录和管理员告警是否启用。
 
 管理接口继续使用 Worker 的 `ADMIN_TOKEN` 鉴权。浏览器只在当前会话中保存输入的管理密钥；服务端还会拒绝本机、内网 IP 和不安全协议，避免手动来源访问内部网络。来源每次变更都会生成修订记录，并触发一次新的增量检测。
 
@@ -131,10 +132,21 @@ npx wrangler pages dev public --port 3000
 `worker/wrangler.jsonc` 中的 Cron 为：
 
 ```text
-15 23 * * *
+15 */4 * * *
 ```
 
-Cloudflare Cron 使用 UTC，因此任务会在北京时间每天 07:15 执行。采集器只访问已配置的官方列表页；每个来源最多收录 5 条公告，并只深入解析最新 1 个详情页，以控制请求量和降低对官方站点的压力。
+Cloudflare Cron 使用 UTC，因此任务每 4 小时执行一次。采集器只访问已配置的官方列表页；每个来源最多收录 5 条公告，并只深入解析最新 1 个详情页，以控制请求量和降低对官方站点的压力。
+
+可选后台推送配置：
+
+```powershell
+npx wrangler secret put ADMIN_BARK_URL --config worker/wrangler.jsonc
+npx wrangler secret put RESEND_API_KEY --config worker/wrangler.jsonc
+npx wrangler secret put EMAIL_FROM --config worker/wrangler.jsonc
+npx wrangler secret put EMAIL_SUBSCRIPTIONS_ENABLED --config worker/wrangler.jsonc
+```
+
+`ADMIN_BARK_URL` 用于连续失败与恢复告警；普通用户的 Bark 地址在订阅界面中单独填写。邮件通道需要有效的 Resend API 密钥、已验证发件地址，并将 `EMAIL_SUBSCRIPTIONS_ENABLED` 明确设为 `true` 后才会开放。
 
 对外接口：
 
@@ -150,9 +162,11 @@ Cloudflare Cron 使用 UTC，因此任务会在北京时间每天 07:15 执行�
 | `DELETE /api/admin/sources/:id` | 停用或软删除来源（需要管理密钥） |
 | `GET /api/admin/sources/:id/revisions` | 查看来源配置历史（需要管理密钥） |
 | `POST /api/admin/sources/:id/rollback/:revisionId` | 恢复来源历史版本（需要管理密钥） |
+| `GET /api/admin/health` | 连续失败、恢复事件和告警状态（需要管理密钥） |
 | `POST /api/subscriptions` | 创建匿名提醒订阅 |
 | `GET/PUT/DELETE /api/subscriptions/:id` | 读取、修改或删除订阅（需要订阅凭证） |
 | `GET /api/subscriptions/:id/reminders` | 获取未读提醒（需要订阅凭证） |
+| `POST /api/subscriptions/:id/test` | 发送 Bark/邮件测试提醒（需要订阅凭证） |
 | `GET /api/stats` | 数量、同步时间和采集报告 |
 | `GET /api/calendar` | 已提取的报名及考试节点 |
 | `POST /api/refresh` | 使用管理员密钥手工刷新 |

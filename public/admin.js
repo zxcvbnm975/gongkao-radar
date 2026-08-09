@@ -4,6 +4,7 @@ const state = {
   token: sessionStorage.getItem("gongkao-admin-token") || "",
   sources: [],
   reports: [],
+  health: null,
   editingId: null,
   busy: false
 };
@@ -31,6 +32,8 @@ const els = {
   historyDialog: document.querySelector("#history-dialog"),
   historyTitle: document.querySelector("#history-title"),
   historyList: document.querySelector("#history-list"),
+  healthSummary: document.querySelector("#health-summary"),
+  healthEvents: document.querySelector("#health-events"),
   saveButton: document.querySelector("#save-source"),
   testButton: document.querySelector("#test-source"),
   toast: document.querySelector("#toast")
@@ -72,7 +75,7 @@ function reportLabel(source, report) {
   if (!report.ok) return { label: `访问失败：${report.error || "等待系统重试"}`, tone: "error" };
   if (report.status === "portal") return { label: "官方入口模式", tone: "ok" };
   if (report.status === "dynamic") return { label: "官网可访问，公告列表为动态页面", tone: "ok" };
-  if (report.found > 0) return { label: `运行正常，最近收录 ${report.found} 条`, tone: "ok" };
+  if (report.found > 0) return { label: `运行正常，最近收录 ${report.found} 条${report.retryCount ? ` · 重试 ${report.retryCount} 次后恢复` : ""}`, tone: "ok" };
   return { label: "官网可访问，当前无匹配公告", tone: "ok" };
 }
 
@@ -114,15 +117,29 @@ function renderSources() {
   document.querySelector("#metric-errors").textContent = errors;
 }
 
+function renderHealth() {
+  const health = state.health;
+  if (!health) return;
+  const summary = health.summary || {};
+  els.healthSummary.textContent = `${summary.healthy || 0} 个正常 · ${summary.warning || 0} 个首次失败 · ${summary.alert || 0} 个连续失败${health.adminPushConfigured ? " · 管理员 Bark 告警已启用" : ""}`;
+  const labels = { failure: "首次失败", alert: "连续失败告警", recovered: "采集已恢复" };
+  els.healthEvents.innerHTML = health.events?.length ? health.events.slice(0, 6).map((event) => {
+    const detail = event.details || {};
+    return `<article class="health-event ${escapeHtml(event.eventType)}"><strong>${escapeHtml(detail.source || event.sourceId)} · ${escapeHtml(labels[event.eventType] || event.eventType)}</strong><span>${escapeHtml(new Date(event.createdAt).toLocaleString("zh-CN"))}${detail.error ? ` · ${escapeHtml(detail.error)}` : ""}</span></article>`;
+  }).join("") : '<div class="health-empty">暂无失败记录</div>';
+}
+
 async function loadDashboard() {
-  const [sourceData, stats] = await Promise.all([request("/api/admin/sources"), request("/api/stats")]);
+  const [sourceData, stats, health] = await Promise.all([request("/api/admin/sources"), request("/api/stats"), request("/api/admin/health")]);
   state.sources = sourceData.items || [];
   state.reports = stats.lastReport || [];
+  state.health = health;
   els.authPanel.hidden = true;
   els.dashboard.hidden = false;
   els.status.textContent = "管理权限已验证";
   els.dot.className = "status-dot ready";
   renderSources();
+  renderHealth();
 }
 
 function endpointTemplate(endpoint = {}, index = 0) {

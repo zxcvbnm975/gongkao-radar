@@ -21,6 +21,16 @@
 .admin-metrics strong { display: block; font-family: Georgia, serif; font-size: 27px; font-weight: 500; }
 .admin-metrics span { color: var(--muted); font-size: 10px; }
 .toolbar-actions { display: flex; gap: 10px; }
+.health-monitor { display: grid; grid-template-columns: minmax(230px, .7fr) 1.3fr; gap: 28px; margin-bottom: 34px; padding: 23px; border: 1px solid var(--line); background: var(--paper); }
+.health-monitor h2 { margin: 0; font-family: "STSong", "Songti SC", serif; font-size: 25px; }
+.health-monitor p:last-child { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.health-events { display: grid; gap: 6px; }
+.health-event { padding: 9px 11px; border-left: 3px solid #b67d49; background: var(--white); }
+.health-event.alert { border-color: #a24838; background: #f8e9e1; }
+.health-event.recovered { border-color: #378363; background: var(--green-soft); }
+.health-event strong, .health-event span { display: block; }
+.health-event strong { font-size: 10px; }
+.health-event span, .health-empty { margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .source-admin-heading { display: flex; justify-content: space-between; align-items: end; gap: 30px; margin-bottom: 16px; }
 .source-admin-heading h2 { margin: 0; font-family: "STSong", "Songti SC", serif; font-size: 30px; }
 .source-admin-heading p { margin: 7px 0 0; color: var(--muted); font-size: 11px; }
@@ -99,6 +109,7 @@
   .admin-filter { width: 100%; }
   .managed-source { grid-template-columns: 42px 1fr; }
   .managed-actions { grid-column: 1 / -1; justify-content: start; max-width: none; }
+  .health-monitor { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 600px) {

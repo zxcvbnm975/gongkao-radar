@@ -282,7 +282,8 @@ const state = {
   usingFallback: false,
   focusCity: "",
   subscription: null,
-  reminders: []
+  reminders: [],
+  deliveryCapabilities: { bark: true, email: false }
 };
 
 const els = {
@@ -309,6 +310,8 @@ const els = {
   subscriptionForm: document.querySelector("#subscription-form"),
   subscriptionMessage: document.querySelector("#subscription-message"),
   deleteSubscription: document.querySelector("#delete-subscription"),
+  testSubscription: document.querySelector("#test-subscription"),
+  deliveryNote: document.querySelector("#delivery-note"),
   toast: document.querySelector("#toast"),
   headerStatus: document.querySelector("#header-status"),
   statusDot: document.querySelector(".status-dot")
@@ -570,7 +573,10 @@ function renderReminders() {
     return;
   }
   els.manageSubscription.textContent = "修改订阅";
-  els.reminderStatus.textContent = state.reminders.length ? "发现与你订阅条件匹配的新动态。" : "订阅运行正常，当前没有未读提醒。";
+  const backgroundEnabled = state.subscription.delivery?.barkEnabled || state.subscription.delivery?.emailEnabled;
+  els.reminderStatus.textContent = state.reminders.length
+    ? `发现与你订阅条件匹配的新动态。${backgroundEnabled ? "后台推送已启用。" : ""}`
+    : `订阅运行正常，当前没有未读提醒。${backgroundEnabled ? "后台推送已启用。" : ""}`;
   els.reminderList.innerHTML = state.reminders.slice(0, 6).map((reminder) => {
     const item = reminder.item || {};
     const detail = reminder.eventType === "deadline"
@@ -630,7 +636,20 @@ function openSubscriptionDialog() {
   form.elements.keywords.value = filters?.keywords?.join("，") || "";
   form.elements.deadlineDays.value = String(filters?.deadlineDays || 3);
   form.elements.browserNotifications.checked = localStorage.getItem("gongkao-browser-notifications") === "1";
+  const delivery = state.subscription?.delivery;
+  form.elements.barkEnabled.checked = Boolean(delivery?.barkEnabled);
+  form.elements.barkUrl.value = "";
+  form.elements.barkUrl.placeholder = delivery?.barkConfigured ? "已配置；留空保持原地址" : "https://api.day.app/你的推送密钥";
+  form.elements.emailEnabled.checked = Boolean(delivery?.emailEnabled);
+  form.elements.emailEnabled.disabled = !state.deliveryCapabilities.email;
+  form.elements.email.value = "";
+  form.elements.email.disabled = !state.deliveryCapabilities.email;
+  form.elements.email.placeholder = delivery?.email ? `已配置：${delivery.email}；留空保持` : "name@example.com";
+  els.deliveryNote.textContent = !state.deliveryCapabilities.email
+    ? "Bark 可直接使用；邮件提醒需管理员配置邮件服务后启用。"
+    : "推送地址只用于发送提醒，不会显示在订阅详情中。";
   els.deleteSubscription.hidden = !state.subscription;
+  els.testSubscription.hidden = !state.subscription || !(delivery?.barkEnabled || delivery?.emailEnabled);
   els.subscriptionMessage.textContent = "";
   els.subscriptionDialog.showModal();
 }
@@ -642,7 +661,13 @@ function subscriptionPayload() {
     tracks: data.getAll("tracks"),
     eventTypes: data.getAll("eventTypes"),
     keywords: String(data.get("keywords") || "").split(/[，,]+/).map((value) => value.trim()).filter(Boolean),
-    deadlineDays: Number(data.get("deadlineDays")) || 3
+    deadlineDays: Number(data.get("deadlineDays")) || 3,
+    delivery: {
+      barkEnabled: data.get("barkEnabled") === "on",
+      barkUrl: String(data.get("barkUrl") || "").trim(),
+      emailEnabled: data.get("emailEnabled") === "on",
+      email: String(data.get("email") || "").trim()
+    }
   };
 }
 
@@ -685,6 +710,7 @@ async function loadData({ notify = false, background = false } = {}) {
     state.allItems = news.items || [];
     state.sources = sources.items || FALLBACK_DATA.sources;
     state.sourceReport = stats.lastReport || [];
+    state.deliveryCapabilities = stats.deliveryCapabilities || { bark: true, email: false };
     state.syncedAt = stats.syncedAt || null;
     state.collecting = Boolean(stats.collecting);
     state.usingFallback = false;
@@ -749,6 +775,18 @@ els.subscribeButton.addEventListener("click", openSubscriptionDialog);
 els.manageSubscription.addEventListener("click", openSubscriptionDialog);
 document.querySelector("#close-subscription").addEventListener("click", () => els.subscriptionDialog.close());
 els.subscriptionForm.addEventListener("submit", (event) => { event.preventDefault(); saveSubscription(); });
+els.testSubscription.addEventListener("click", async () => {
+  const credential = storedSubscription();
+  if (!credential) return;
+  els.subscriptionMessage.textContent = "正在发送测试提醒…";
+  try {
+    const result = await request(`/api/subscriptions/${encodeURIComponent(credential.subscriptionId)}/test`, { method: "POST", headers: subscriptionHeaders(), body: "{}" });
+    const labels = { bark: "Bark", email: "邮件" };
+    els.subscriptionMessage.textContent = result.results?.map((item) => `${labels[item.channel] || item.channel}：${item.ok ? "发送成功" : item.error}`).join("；") || "测试提醒已发送";
+  } catch (error) {
+    els.subscriptionMessage.textContent = error.message;
+  }
+});
 els.markRemindersRead.addEventListener("click", async () => {
   const credential = storedSubscription();
   if (!credential || !state.reminders.length) return;

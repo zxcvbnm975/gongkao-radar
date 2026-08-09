@@ -214,9 +214,11 @@ const INITIAL_SOURCE_BATCH_SIZE = 6;
 const INITIAL_SOURCE_TIMEOUT_MS = 3500;
 const REFRESH_LEASE_MS = 3 * 60 * 1000;
 const SOURCE_ALARM_STRATEGY = "source-alarm-v1";
-const SOURCE_CONFIG_VERSION = "2026-08-09-reminders-v1";
+const SOURCE_CONFIG_VERSION = "2026-08-09-push-health-v1";
 const SEED_VERSION = "4";
 const SOURCE_TRACKS = new Set(["公务员", "事业单位", "国家电网", "烟草系统"]);
+const SOURCE_RETRY_DELAYS_MS = [250, 750];
+const PUSH_RETRY_LIMIT = 3;
 
 function validatePattern(value, label) {
   const pattern = String(value || "").trim();
@@ -334,6 +336,52 @@ function normalizeSubscriptionFilters(input = {}) {
     : String(input.keywords || "").split(/[，,\s]+/).map((value) => value.trim()).filter(Boolean).slice(0, 10).map((value) => value.slice(0, 30));
   const deadlineDays = Math.min(Math.max(Number(input.deadlineDays) || 3, 1), 14);
   return { cities, tracks, eventTypes: eventTypes.length ? eventTypes : ["new", "updated", "deadline"], keywords, deadlineDays };
+}
+
+export function normalizeBarkUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = new URL(raw.includes("://") ? raw : `https://api.day.app/${raw}`);
+  } catch {
+    throw new Error("Bark 地址格式不正确");
+  }
+  const key = parsed.pathname.split("/").filter(Boolean)[0] || "";
+  if (parsed.protocol !== "https:" || parsed.hostname !== "api.day.app" || !/^[A-Za-z0-9_-]{6,160}$/.test(key)) {
+    throw new Error("请填写 Bark 提供的 https://api.day.app/推送密钥 地址");
+  }
+  return `https://api.day.app/${key}`;
+}
+
+function normalizeSubscriptionDelivery(input = {}, { update = false } = {}) {
+  const barkEnabled = Boolean(input.barkEnabled);
+  const emailEnabled = Boolean(input.emailEnabled);
+  const email = String(input.email || "").trim().toLowerCase();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("邮箱地址格式不正确");
+  const delivery = { barkEnabled, emailEnabled };
+  if (email) delivery.email = email;
+  else if (!update || !emailEnabled) delivery.email = null;
+  if (input.barkUrl) delivery.barkUrl = normalizeBarkUrl(input.barkUrl);
+  else if (!update || !barkEnabled) delivery.barkUrl = null;
+  if (!update && barkEnabled && !delivery.barkUrl) throw new Error("启用 Bark 时需要填写推送地址");
+  if (!update && emailEnabled && !delivery.email) throw new Error("启用邮件时需要填写邮箱地址");
+  return delivery;
+}
+
+function redactDelivery(delivery = {}, env = {}) {
+  const email = delivery.email || "";
+  return {
+    barkEnabled: Boolean(delivery.barkEnabled && delivery.barkUrl),
+    barkConfigured: Boolean(delivery.barkUrl),
+    emailEnabled: Boolean(delivery.emailEnabled && delivery.email),
+    email: email ? email.replace(/^(.{1,2}).*(@.*)$/, "$1***$2") : null,
+    emailAvailable: Boolean(env.RESEND_API_KEY && env.EMAIL_FROM && env.EMAIL_SUBSCRIPTIONS_ENABLED === "true")
+  };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function hashSecret(value) {
@@ -996,6 +1044,21 @@ async function acquireRefreshLease(env) {
   return response.json();
 }
 
+async function collectSourceWithRetry(source, options = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= SOURCE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const result = await collectSource(source, options);
+      return { ...result, retryCount: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < SOURCE_RETRY_DELAYS_MS.length) await delay(SOURCE_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  if (lastError && typeof lastError === "object") lastError.retryCount = SOURCE_RETRY_DELAYS_MS.length;
+  throw lastError;
+}
+
 async function collectAllSources(sources, { lightweight = false } = {}) {
   const reportById = new Map();
   const collected = [];
@@ -1006,7 +1069,7 @@ async function collectAllSources(sources, { lightweight = false } = {}) {
     const batchResults = await Promise.all(batch.map(async (source) => {
       const started = Date.now();
       try {
-        const result = await collectSource(source, { lightweight });
+        const result = await collectSourceWithRetry(source, { lightweight });
         return {
           source,
           items: result.items,
@@ -1022,6 +1085,7 @@ async function collectAllSources(sources, { lightweight = false } = {}) {
             endpointLabel: result.endpointLabel,
             dynamicPortal: result.dynamicPortal,
             fallbackUsed: result.fallbackUsed,
+            retryCount: result.retryCount,
             attemptedEndpoints: result.attemptedEndpoints,
             durationMs: Date.now() - started,
             checkedAt: new Date().toISOString()
@@ -1040,6 +1104,7 @@ async function collectAllSources(sources, { lightweight = false } = {}) {
             durationMs: Date.now() - started,
             checkedAt: new Date().toISOString(),
             error: error instanceof Error ? error.message : String(error),
+            retryCount: Number(error?.retryCount) || SOURCE_RETRY_DELAYS_MS.length,
             attemptedEndpoints: error?.attemptedEndpoints || []
           }
         };
@@ -1133,6 +1198,13 @@ export default {
       const authError = adminAuthError(request, env);
       if (authError) return authError;
       return json(await getManagedSources(env, { includeInactive: true }), {}, request, env);
+    }
+
+    if (url.pathname === "/api/admin/health" && request.method === "GET") {
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
+      const response = await getStore(env).fetch("https://store.internal/health");
+      return json(await response.json(), { status: response.status }, request, env);
     }
 
     if (url.pathname === "/api/admin/sources/test" && request.method === "POST") {
@@ -1247,19 +1319,26 @@ export default {
     }
 
     if (url.pathname === "/api/subscriptions" && request.method === "POST") {
-      const filters = normalizeSubscriptionFilters(await request.json().catch(() => ({})));
-      const subscriptionId = crypto.randomUUID();
-      const editToken = `${crypto.randomUUID()}${crypto.randomUUID().replaceAll("-", "")}`;
-      const response = await getStore(env).fetch("https://store.internal/subscriptions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscriptionId, tokenHash: await hashSecret(editToken), filters })
-      });
-      return json({ ...(await response.json()), editToken }, { status: response.status }, request, env);
+      try {
+        const body = await request.json().catch(() => ({}));
+        if (body.delivery?.emailEnabled && !(env.RESEND_API_KEY && env.EMAIL_FROM && env.EMAIL_SUBSCRIPTIONS_ENABLED === "true")) throw new Error("邮件提醒尚未开放，请先使用 Bark 推送");
+        const filters = normalizeSubscriptionFilters(body);
+        const delivery = normalizeSubscriptionDelivery(body.delivery);
+        const subscriptionId = crypto.randomUUID();
+        const editToken = `${crypto.randomUUID()}${crypto.randomUUID().replaceAll("-", "")}`;
+        const response = await getStore(env).fetch("https://store.internal/subscriptions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscriptionId, tokenHash: await hashSecret(editToken), filters, delivery })
+        });
+        return json({ ...(await response.json()), editToken }, { status: response.status }, request, env);
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 }, request, env);
+      }
     }
 
-    const subscriptionActionMatch = url.pathname.match(/^\/api\/subscriptions\/([^/]+)\/(reminders|seen)$/);
-    if (subscriptionActionMatch && ((subscriptionActionMatch[2] === "reminders" && request.method === "GET") || (subscriptionActionMatch[2] === "seen" && request.method === "POST"))) {
+    const subscriptionActionMatch = url.pathname.match(/^\/api\/subscriptions\/([^/]+)\/(reminders|seen|test)$/);
+    if (subscriptionActionMatch && ((subscriptionActionMatch[2] === "reminders" && request.method === "GET") || (["seen", "test"].includes(subscriptionActionMatch[2]) && request.method === "POST"))) {
       await ensureSeeded(env);
       const editToken = request.headers.get("X-Subscription-Token");
       if (!editToken) return json({ error: "缺少订阅凭证" }, { status: 401 }, request, env);
@@ -1281,10 +1360,17 @@ export default {
       const id = decodeURIComponent(subscriptionMatch[1]);
       const body = request.method === "PUT" ? await request.json().catch(() => ({})) : {};
       const tokenHash = await hashSecret(editToken);
+      let updateBody;
+      try {
+        if (body.delivery?.emailEnabled && !(env.RESEND_API_KEY && env.EMAIL_FROM && env.EMAIL_SUBSCRIPTIONS_ENABLED === "true")) throw new Error("邮件提醒尚未开放，请先使用 Bark 推送");
+        updateBody = request.method === "PUT" ? { filters: normalizeSubscriptionFilters(body), delivery: normalizeSubscriptionDelivery(body.delivery, { update: true }) } : null;
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 }, request, env);
+      }
       const response = await getStore(env).fetch(`https://store.internal/subscriptions/${encodeURIComponent(id)}`, {
         method: request.method,
         headers: { "Content-Type": "application/json", "X-Token-Hash": tokenHash },
-        body: request.method === "PUT" ? JSON.stringify({ filters: normalizeSubscriptionFilters(body) }) : undefined
+        body: updateBody ? JSON.stringify(updateBody) : undefined
       });
       return json(await response.json(), { status: response.status }, request, env);
     }
@@ -1306,7 +1392,13 @@ export default {
           stats.refreshStartedAt = scheduled.startedAt;
         }
       }
-      return json(stats, { headers: { "Cache-Control": "no-store" } }, request, env);
+      return json({
+        ...stats,
+        deliveryCapabilities: {
+          bark: true,
+          email: Boolean(env.RESEND_API_KEY && env.EMAIL_FROM && env.EMAIL_SUBSCRIPTIONS_ENABLED === "true")
+        }
+      }, { headers: { "Cache-Control": "no-store" } }, request, env);
     }
 
     if (["/api/news", "/api/calendar"].includes(url.pathname) && request.method === "GET") {
@@ -1339,8 +1431,9 @@ export default {
 };
 
 export class NewsStore {
-  constructor(ctx) {
+  constructor(ctx, env) {
     this.ctx = ctx;
+    this.env = env;
     this.ctx.blockConcurrencyWhile(async () => {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS articles (
@@ -1420,6 +1513,7 @@ export class NewsStore {
           subscription_id TEXT PRIMARY KEY,
           token_hash TEXT NOT NULL,
           filters_json TEXT NOT NULL,
+          delivery_json TEXT NOT NULL DEFAULT '{}',
           enabled INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
@@ -1431,6 +1525,37 @@ export class NewsStore {
           PRIMARY KEY(subscription_id, event_key)
         );
         CREATE INDEX IF NOT EXISTS idx_subscription_deliveries_subscription ON subscription_deliveries(subscription_id, seen_at DESC);
+        CREATE TABLE IF NOT EXISTS push_deliveries (
+          subscription_id TEXT NOT NULL,
+          event_key TEXT NOT NULL,
+          channel TEXT NOT NULL,
+          status TEXT NOT NULL,
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          attempted_at TEXT NOT NULL,
+          sent_at TEXT,
+          PRIMARY KEY(subscription_id, event_key, channel)
+        );
+        CREATE INDEX IF NOT EXISTS idx_push_deliveries_pending ON push_deliveries(status, attempted_at);
+        CREATE TABLE IF NOT EXISTS source_health (
+          source_id TEXT PRIMARY KEY,
+          source_name TEXT NOT NULL,
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          total_failures INTEGER NOT NULL DEFAULT 0,
+          last_success_at TEXT,
+          last_failure_at TEXT,
+          last_error TEXT,
+          last_alert_at TEXT,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS health_events (
+          event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          details_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_health_events_created ON health_events(created_at DESC);
       `);
       const articleColumns = this.ctx.storage.sql.exec("PRAGMA table_info(articles)").toArray().map((column) => column.name);
       if (!articleColumns.includes("city")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN city TEXT");
@@ -1440,11 +1565,14 @@ export class NewsStore {
       if (!articleColumns.includes("version_count")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN version_count INTEGER NOT NULL DEFAULT 1");
       if (!articleColumns.includes("last_changed_at")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN last_changed_at TEXT");
       if (!articleColumns.includes("change_fields")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN change_fields TEXT");
+      const subscriptionColumns = this.ctx.storage.sql.exec("PRAGMA table_info(subscriptions)").toArray().map((column) => column.name);
+      if (!subscriptionColumns.includes("delivery_json")) this.ctx.storage.sql.exec("ALTER TABLE subscriptions ADD COLUMN delivery_json TEXT NOT NULL DEFAULT '{}'");
       this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS idx_articles_priority ON articles(priority DESC, published_at DESC)");
       this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS idx_articles_canonical ON articles(canonical_key)");
       for (const row of this.ctx.storage.sql.exec("SELECT id, title, region, track FROM articles WHERE canonical_key IS NULL OR canonical_key = ''").toArray()) {
         this.ctx.storage.sql.exec("UPDATE articles SET canonical_key = ?, last_changed_at = COALESCE(last_changed_at, fetched_at) WHERE id = ?", canonicalAnnouncementKey(row), row.id);
       }
+      this.ctx.storage.sql.exec("PRAGMA optimize");
     });
   }
 
@@ -1510,6 +1638,167 @@ export class NewsStore {
   subscriptionRow(id, tokenHash) {
     const row = this.ctx.storage.sql.exec("SELECT * FROM subscriptions WHERE subscription_id = ? AND enabled = 1", id).toArray()[0];
     return row && row.token_hash === tokenHash ? row : null;
+  }
+
+  subscriptionView(row) {
+    const recentDeliveries = this.ctx.storage.sql.exec(
+      "SELECT channel, status, attempt_count, last_error, attempted_at, sent_at FROM push_deliveries WHERE subscription_id = ? ORDER BY attempted_at DESC LIMIT 5",
+      row.subscription_id
+    ).toArray().map((delivery) => ({
+      channel: delivery.channel,
+      status: delivery.status,
+      attemptCount: delivery.attempt_count,
+      lastError: delivery.last_error,
+      attemptedAt: delivery.attempted_at,
+      sentAt: delivery.sent_at
+    }));
+    return {
+      subscriptionId: row.subscription_id,
+      filters: JSON.parse(row.filters_json),
+      delivery: redactDelivery(JSON.parse(row.delivery_json || "{}"), this.env),
+      recentDeliveries,
+      updatedAt: row.updated_at
+    };
+  }
+
+  notificationText(reminder) {
+    const labels = { new: "新公告", updated: "公告已更新", deadline: "报名即将截止" };
+    const item = reminder.item || {};
+    const changeText = reminder.eventType === "updated" && reminder.changeFields?.length
+      ? `\n变更字段：${reminder.changeFields.join("、")}`
+      : "";
+    return {
+      title: `公考雷达 · ${labels[reminder.eventType] || "招录提醒"}`,
+      body: `${item.title || "发现一条匹配动态"}${changeText}`.slice(0, 900),
+      url: item.articleUrl || "https://gongkao-radar.pages.dev/"
+    };
+  }
+
+  async sendChannel(channel, delivery, reminder) {
+    const message = this.notificationText(reminder);
+    if (channel === "bark") {
+      const barkUrl = normalizeBarkUrl(delivery.barkUrl);
+      const deviceKey = new URL(barkUrl).pathname.split("/").filter(Boolean)[0];
+      const response = await fetch("https://api.day.app/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ device_key: deviceKey, title: message.title, body: message.body, url: message.url, group: "公考雷达", level: "timeSensitive" })
+      });
+      if (!response.ok) throw new Error(`Bark HTTP ${response.status}`);
+      const result = await response.json().catch(() => ({}));
+      if (result.code !== undefined && Number(result.code) !== 200) throw new Error(`Bark ${result.message || result.code}`);
+      return;
+    }
+    if (channel === "email") {
+      if (!this.env.RESEND_API_KEY || !this.env.EMAIL_FROM || this.env.EMAIL_SUBSCRIPTIONS_ENABLED !== "true") throw new Error("邮件服务尚未配置");
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.env.RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": `${reminder.eventKey}:${delivery.email}`.slice(0, 250)
+        },
+        body: JSON.stringify({ from: this.env.EMAIL_FROM, to: [delivery.email], subject: message.title, text: `${message.body}\n\n查看官方公告：${message.url}` })
+      });
+      if (!response.ok) throw new Error(`邮件 HTTP ${response.status}`);
+    }
+  }
+
+  async dispatchPushNotifications() {
+    const rows = this.ctx.storage.sql.exec("SELECT * FROM subscriptions WHERE enabled = 1").toArray();
+    let sent = 0;
+    let failed = 0;
+    for (const row of rows) {
+      const delivery = JSON.parse(row.delivery_json || "{}");
+      const channels = [delivery.barkEnabled && delivery.barkUrl ? "bark" : null, delivery.emailEnabled && delivery.email ? "email" : null].filter(Boolean);
+      if (!channels.length) continue;
+      const reminders = this.subscriptionReminders(row.subscription_id, row).items.slice(0, 8);
+      for (const reminder of reminders) {
+        for (const channel of channels) {
+          const previous = this.ctx.storage.sql.exec(
+            "SELECT * FROM push_deliveries WHERE subscription_id = ? AND event_key = ? AND channel = ?",
+            row.subscription_id,
+            reminder.eventKey,
+            channel
+          ).toArray()[0];
+          if (previous?.status === "sent" || Number(previous?.attempt_count) >= PUSH_RETRY_LIMIT) continue;
+          const previousAt = previous?.attempted_at ? new Date(previous.attempted_at).getTime() : 0;
+          const backoffMs = 15 * 60 * 1000 * (2 ** Math.max(Number(previous?.attempt_count) - 1, 0));
+          if (previousAt && Date.now() - previousAt < backoffMs) continue;
+          const attemptedAt = new Date().toISOString();
+          const attemptCount = (Number(previous?.attempt_count) || 0) + 1;
+          try {
+            await this.sendChannel(channel, delivery, reminder);
+            this.ctx.storage.sql.exec(
+              "INSERT OR REPLACE INTO push_deliveries(subscription_id, event_key, channel, status, attempt_count, last_error, attempted_at, sent_at) VALUES (?, ?, ?, 'sent', ?, NULL, ?, ?)",
+              row.subscription_id, reminder.eventKey, channel, attemptCount, attemptedAt, attemptedAt
+            );
+            sent += 1;
+          } catch (error) {
+            this.ctx.storage.sql.exec(
+              "INSERT OR REPLACE INTO push_deliveries(subscription_id, event_key, channel, status, attempt_count, last_error, attempted_at, sent_at) VALUES (?, ?, ?, 'failed', ?, ?, ?, NULL)",
+              row.subscription_id, reminder.eventKey, channel, attemptCount, String(error?.message || error).slice(0, 500), attemptedAt
+            );
+            failed += 1;
+          }
+        }
+      }
+    }
+    return { sent, failed };
+  }
+
+  recordSourceHealth(report = []) {
+    const events = [];
+    const now = new Date().toISOString();
+    for (const item of report.filter(Boolean)) {
+      const previous = this.ctx.storage.sql.exec("SELECT * FROM source_health WHERE source_id = ?", item.sourceId).toArray()[0];
+      if (item.ok) {
+        if (Number(previous?.consecutive_failures) >= 2) {
+          const details = { source: item.source, previousFailures: Number(previous.consecutive_failures), checkedAt: item.checkedAt || now };
+          this.ctx.storage.sql.exec("INSERT INTO health_events(source_id, event_type, details_json, created_at) VALUES (?, 'recovered', ?, ?)", item.sourceId, JSON.stringify(details), now);
+          events.push({ sourceId: item.sourceId, eventType: "recovered", details });
+        }
+        this.ctx.storage.sql.exec(
+          `INSERT INTO source_health(source_id, source_name, consecutive_failures, total_failures, last_success_at, last_failure_at, last_error, last_alert_at, updated_at)
+           VALUES (?, ?, 0, 0, ?, NULL, NULL, NULL, ?)
+           ON CONFLICT(source_id) DO UPDATE SET source_name = excluded.source_name, consecutive_failures = 0, last_success_at = excluded.last_success_at, last_error = NULL, updated_at = excluded.updated_at`,
+          item.sourceId, item.source, item.checkedAt || now, now
+        );
+        continue;
+      }
+      const consecutive = (Number(previous?.consecutive_failures) || 0) + 1;
+      const total = (Number(previous?.total_failures) || 0) + 1;
+      this.ctx.storage.sql.exec(
+        `INSERT INTO source_health(source_id, source_name, consecutive_failures, total_failures, last_success_at, last_failure_at, last_error, last_alert_at, updated_at)
+         VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?)
+         ON CONFLICT(source_id) DO UPDATE SET source_name = excluded.source_name, consecutive_failures = excluded.consecutive_failures, total_failures = excluded.total_failures, last_failure_at = excluded.last_failure_at, last_error = excluded.last_error, updated_at = excluded.updated_at`,
+        item.sourceId, item.source, consecutive, total, item.checkedAt || now, String(item.error || "采集失败").slice(0, 500), now
+      );
+      const eventType = consecutive >= 2 ? "alert" : "failure";
+      if (consecutive <= 2) {
+        const details = { source: item.source, consecutiveFailures: consecutive, error: item.error || "采集失败", retryCount: item.retryCount || 0, checkedAt: item.checkedAt || now };
+        this.ctx.storage.sql.exec("INSERT INTO health_events(source_id, event_type, details_json, created_at) VALUES (?, ?, ?, ?)", item.sourceId, eventType, JSON.stringify(details), now);
+        events.push({ sourceId: item.sourceId, eventType, details });
+      }
+    }
+    return events;
+  }
+
+  async dispatchAdminHealthAlerts(events) {
+    const actionable = events.filter((event) => event.eventType === "alert" || event.eventType === "recovered");
+    if (!actionable.length || !this.env.ADMIN_BARK_URL) return;
+    const delivery = { barkUrl: normalizeBarkUrl(this.env.ADMIN_BARK_URL) };
+    for (const event of actionable) {
+      const recovered = event.eventType === "recovered";
+      await this.sendChannel("bark", delivery, {
+        eventKey: `health:${event.sourceId}:${event.eventType}:${Date.now()}`,
+        eventType: "updated",
+        item: {
+          title: recovered ? `${event.details.source}采集已恢复` : `${event.details.source}连续采集失败`,
+          articleUrl: "https://gongkao-radar.pages.dev/admin"
+        }
+      }).catch(() => {});
+    }
   }
 
   matchesSubscription(item, filters) {
@@ -1711,7 +2000,7 @@ export class NewsStore {
     let items = [];
     let sourceReport;
     try {
-      const result = await collectSource(source, { lightweight: true });
+      const result = await collectSourceWithRetry(source, { lightweight: true });
       items = result.items;
       sourceReport = {
         sourceId: source.id,
@@ -1725,6 +2014,7 @@ export class NewsStore {
         endpointLabel: result.endpointLabel,
         dynamicPortal: result.dynamicPortal,
         fallbackUsed: result.fallbackUsed,
+        retryCount: result.retryCount,
         attemptedEndpoints: result.attemptedEndpoints,
         durationMs: Date.now() - started,
         checkedAt: new Date().toISOString()
@@ -1739,6 +2029,7 @@ export class NewsStore {
         durationMs: Date.now() - started,
         checkedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
+        retryCount: Number(error?.retryCount) || SOURCE_RETRY_DELAYS_MS.length,
         attemptedEndpoints: error?.attemptedEndpoints || []
       };
     }
@@ -1775,6 +2066,8 @@ export class NewsStore {
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('source_config_version', ?)", scheduledVersion);
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", syncedAt);
     this.ctx.storage.sql.exec("DELETE FROM metadata WHERE key IN ('pending_report', 'refresh_source_index', 'refresh_sources')");
+    const healthEvents = this.recordSourceHealth(report);
+    await Promise.all([this.dispatchPushNotifications(), this.dispatchAdminHealthAlerts(healthEvents)]);
   }
 
   async fetch(request) {
@@ -1784,17 +2077,18 @@ export class NewsStore {
       const body = await request.json();
       const now = new Date().toISOString();
       this.ctx.storage.sql.exec(
-        "INSERT INTO subscriptions(subscription_id, token_hash, filters_json, enabled, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
+        "INSERT INTO subscriptions(subscription_id, token_hash, filters_json, delivery_json, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
         body.subscriptionId,
         body.tokenHash,
         JSON.stringify(body.filters),
+        JSON.stringify(body.delivery || {}),
         now,
         now
       );
-      return Response.json({ ok: true, subscriptionId: body.subscriptionId, filters: body.filters }, { status: 201 });
+      return Response.json({ ok: true, subscriptionId: body.subscriptionId, filters: body.filters, delivery: redactDelivery(body.delivery || {}, this.env) }, { status: 201 });
     }
 
-    const subscriptionActionMatch = url.pathname.match(/^\/subscriptions\/([^/]+)\/(reminders|seen)$/);
+    const subscriptionActionMatch = url.pathname.match(/^\/subscriptions\/([^/]+)\/(reminders|seen|test)$/);
     if (subscriptionActionMatch) {
       const id = decodeURIComponent(subscriptionActionMatch[1]);
       const body = await request.json().catch(() => ({}));
@@ -1809,6 +2103,21 @@ export class NewsStore {
         }
         return Response.json({ ok: true });
       }
+      if (subscriptionActionMatch[2] === "test" && request.method === "POST") {
+        const delivery = JSON.parse(row.delivery_json || "{}");
+        const channels = [delivery.barkEnabled && delivery.barkUrl ? "bark" : null, delivery.emailEnabled && delivery.email ? "email" : null].filter(Boolean);
+        if (!channels.length) return Response.json({ error: "请先启用 Bark 或邮件推送" }, { status: 400 });
+        const results = [];
+        for (const channel of channels) {
+          try {
+            await this.sendChannel(channel, delivery, { eventKey: `test:${Date.now()}`, eventType: "new", item: { title: "推送测试成功：公考雷达后台提醒已启用", articleUrl: "https://gongkao-radar.pages.dev/" } });
+            results.push({ channel, ok: true });
+          } catch (error) {
+            results.push({ channel, ok: false, error: String(error?.message || error) });
+          }
+        }
+        return Response.json({ ok: results.every((result) => result.ok), results }, { status: results.every((result) => result.ok) ? 200 : 502 });
+      }
     }
 
     const subscriptionMatch = url.pathname.match(/^\/subscriptions\/([^/]+)$/);
@@ -1817,14 +2126,21 @@ export class NewsStore {
       const body = await request.json().catch(() => ({}));
       const row = this.subscriptionRow(id, request.headers.get("X-Token-Hash"));
       if (!row) return Response.json({ error: "订阅不存在或凭证无效" }, { status: 401 });
-      if (request.method === "GET") return Response.json({ subscriptionId: id, filters: JSON.parse(row.filters_json), updatedAt: row.updated_at });
+      if (request.method === "GET") return Response.json(this.subscriptionView(row));
       if (request.method === "PUT") {
         const now = new Date().toISOString();
-        this.ctx.storage.sql.exec("UPDATE subscriptions SET filters_json = ?, updated_at = ? WHERE subscription_id = ?", JSON.stringify(body.filters), now, id);
-        return Response.json({ ok: true, subscriptionId: id, filters: body.filters, updatedAt: now });
+        const currentDelivery = JSON.parse(row.delivery_json || "{}");
+        const nextDelivery = { ...currentDelivery, ...(body.delivery || {}) };
+        if (!nextDelivery.barkEnabled) nextDelivery.barkUrl = null;
+        if (!nextDelivery.emailEnabled) nextDelivery.email = null;
+        if (nextDelivery.barkEnabled && !nextDelivery.barkUrl) return Response.json({ error: "启用 Bark 时需要填写推送地址" }, { status: 400 });
+        if (nextDelivery.emailEnabled && !nextDelivery.email) return Response.json({ error: "启用邮件时需要填写邮箱地址" }, { status: 400 });
+        this.ctx.storage.sql.exec("UPDATE subscriptions SET filters_json = ?, delivery_json = ?, updated_at = ? WHERE subscription_id = ?", JSON.stringify(body.filters), JSON.stringify(nextDelivery), now, id);
+        return Response.json({ ok: true, ...this.subscriptionView(this.ctx.storage.sql.exec("SELECT * FROM subscriptions WHERE subscription_id = ?", id).one()) });
       }
       if (request.method === "DELETE") {
         this.ctx.storage.sql.exec("DELETE FROM subscription_deliveries WHERE subscription_id = ?", id);
+        this.ctx.storage.sql.exec("DELETE FROM push_deliveries WHERE subscription_id = ?", id);
         this.ctx.storage.sql.exec("DELETE FROM subscriptions WHERE subscription_id = ?", id);
         return Response.json({ ok: true });
       }
@@ -1990,6 +2306,10 @@ export class NewsStore {
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('source_config_version', ?)", body.sourceConfigVersion || "unknown");
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", body.startedAt || body.syncedAt || new Date().toISOString());
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", body.syncedAt || new Date().toISOString());
+        const healthEvents = this.recordSourceHealth(body.report || []);
+        const delivery = await this.dispatchPushNotifications();
+        await this.dispatchAdminHealthAlerts(healthEvents);
+        return Response.json({ ok: true, changed, delivery });
       }
       return Response.json({ ok: true, changed });
     }
@@ -2039,6 +2359,36 @@ export class NewsStore {
       }
       await this.ctx.storage.setAlarm(now + 100);
       return Response.json({ granted: true, startedAt: nextStartedAt });
+    }
+
+    if (url.pathname === "/health" && request.method === "GET") {
+      const sources = this.ctx.storage.sql.exec("SELECT * FROM source_health ORDER BY consecutive_failures DESC, updated_at DESC").toArray().map((row) => ({
+        sourceId: row.source_id,
+        source: row.source_name,
+        consecutiveFailures: Number(row.consecutive_failures) || 0,
+        totalFailures: Number(row.total_failures) || 0,
+        lastSuccessAt: row.last_success_at,
+        lastFailureAt: row.last_failure_at,
+        lastError: row.last_error,
+        updatedAt: row.updated_at
+      }));
+      const events = this.ctx.storage.sql.exec("SELECT * FROM health_events ORDER BY created_at DESC LIMIT 30").toArray().map((row) => ({
+        eventId: row.event_id,
+        sourceId: row.source_id,
+        eventType: row.event_type,
+        details: JSON.parse(row.details_json),
+        createdAt: row.created_at
+      }));
+      return Response.json({
+        summary: {
+          healthy: sources.filter((source) => source.consecutiveFailures === 0).length,
+          warning: sources.filter((source) => source.consecutiveFailures === 1).length,
+          alert: sources.filter((source) => source.consecutiveFailures >= 2).length
+        },
+        sources,
+        events,
+        adminPushConfigured: Boolean(this.env.ADMIN_BARK_URL)
+      });
     }
 
     if (url.pathname === "/news" && request.method === "GET") {
