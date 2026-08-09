@@ -485,6 +485,9 @@ function renderSourceStatus(source, report) {
     return `<span class="source-status error"><i></i>${scope} · 访问失败，稍后重试</span>`;
   }
   const endpointNote = report.fallbackUsed ? ` · 已切换${escapeHtml(report.endpointLabel || "备用入口")}` : "";
+  if (report.status === "dynamic" || report.dynamicPortal) {
+    return `<span class="source-status portal"><i></i>${scope} · 官网可访问，公告列表为动态页面${endpointNote}</span>`;
+  }
   const detail = report.found > 0 ? `收录 ${report.found} 条${endpointNote}` : `可访问，暂无新公告${endpointNote}`;
   return `<span class="source-status ready"><i></i>${scope} · ${detail}</span>`;
 }

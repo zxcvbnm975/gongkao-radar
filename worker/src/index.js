@@ -7,7 +7,8 @@ const SOURCES = [
     url: "https://www.scs.gov.cn/",
     endpoints: [
       { url: "https://www.scs.gov.cn/", label: "国家公务员局" },
-      { urlTemplate: "http://bm.scs.gov.cn/kl{year}", yearOffsets: [1, 0], label: "{year}年度国考专题" }
+      { urlTemplate: "http://bm.scs.gov.cn/kl{year}", yearOffsets: [1, 0], label: "{year}年度国考专题", dynamicPortal: true },
+      { url: "https://www.beijing.gov.cn/fuwu/bmfw/sy/jrts/tzxx/", label: "首都之窗·国家公务员局消息", titlePattern: "中央机关.{0,20}(考试录用公务员|公开遴选|公开选调)|国家公务员局.{0,20}(调剂|补充录用|面试|资格复审)" }
     ],
     adapter: { id: "scs", titlePattern: "公务员|国考|考试录用|公开遴选|公开选调|调剂|补充录用|面试|资格复审" },
     official: true
@@ -19,9 +20,10 @@ const SOURCES = [
     badge: "沪",
     url: "https://www.shacs.gov.cn/",
     endpoints: [
-      { url: "https://www.shacs.gov.cn/", label: "上海市公务员局" },
-      { url: "https://www.shacs.gov.cn/?pc=1", label: "上海市公务员局电脑版" },
-      { url: "https://bm.shacs.gov.cn/zlxt", label: "上海公务员考录专题" }
+      { url: "https://www.shacs.gov.cn/", label: "上海市公务员局", dynamicPortal: true },
+      { url: "https://www.shacs.gov.cn/?pc=1", label: "上海市公务员局电脑版", dynamicPortal: true },
+      { url: "https://bm.shacs.gov.cn/zlxt", label: "上海公务员考录专题", dynamicPortal: true },
+      { url: "https://www.shanghai.gov.cn/nw4411/index.html", label: "上海市政府·上海要闻", titlePattern: "上海.{0,16}(公务员|选调生).{0,18}(考试录用|招录|公告|报名)|公务员考试.{0,18}(报名|招录|公告)" }
     ],
     adapter: { id: "shanghai", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
@@ -47,7 +49,9 @@ const SOURCES = [
     url: "https://gwy.zjks.gov.cn/",
     endpoints: [
       { url: "https://gwy.zjks.gov.cn/", label: "浙江公务员考试录用网" },
-      { url: "https://gwy.zjks.gov.cn/zjgwy/website/queryMore.htm", label: "浙江重要通知列表" }
+      { url: "https://gwy.zjks.gov.cn/zjgwy/website/queryMore.htm", label: "浙江重要通知列表" },
+      { url: "https://www.zjzzgz.gov.cn/col/col1413011/index.html", label: "浙江组织工作网·公示公告" },
+      { url: "https://www.zjzzgz.gov.cn/", label: "浙江组织工作网首页" }
     ],
     adapter: { id: "zhejiang", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
@@ -210,7 +214,7 @@ const INITIAL_SOURCE_BATCH_SIZE = 6;
 const INITIAL_SOURCE_TIMEOUT_MS = 3500;
 const REFRESH_LEASE_MS = 3 * 60 * 1000;
 const SOURCE_ALARM_STRATEGY = "source-alarm-v1";
-const SOURCE_CONFIG_VERSION = "2026-08-09-dynamic-adapters-v2";
+const SOURCE_CONFIG_VERSION = "2026-08-09-dynamic-adapters-v3";
 const SEED_VERSION = "4";
 
 const SEED_ITEMS = [
@@ -818,6 +822,7 @@ export async function collectSource(source, { lightweight = false } = {}) {
     parseMethod: candidates[0]?.parseMethod || "none",
     endpoint: selected.url,
     endpointLabel: selected.label,
+    dynamicPortal: Boolean(selected.dynamicPortal && !candidates.length),
     fallbackUsed: selected.index > 0,
     attemptedEndpoints
   };
@@ -857,13 +862,14 @@ async function collectAllSources({ lightweight = false } = {}) {
           report: {
             sourceId: source.id,
             source: source.name,
-            status: result.items.length ? "success" : "empty",
+            status: result.items.length ? "success" : result.dynamicPortal ? "dynamic" : "empty",
             ok: true,
             found: result.items.length,
             candidates: result.candidates,
             parseMethod: result.parseMethod,
             endpoint: result.endpoint,
             endpointLabel: result.endpointLabel,
+            dynamicPortal: result.dynamicPortal,
             fallbackUsed: result.fallbackUsed,
             attemptedEndpoints: result.attemptedEndpoints,
             durationMs: Date.now() - started,
@@ -1142,13 +1148,14 @@ export class NewsStore {
       sourceReport = {
         sourceId: source.id,
         source: source.name,
-        status: result.items.length ? "success" : "empty",
+        status: result.items.length ? "success" : result.dynamicPortal ? "dynamic" : "empty",
         ok: true,
         found: result.items.length,
         candidates: result.candidates,
         parseMethod: result.parseMethod,
         endpoint: result.endpoint,
         endpointLabel: result.endpointLabel,
+        dynamicPortal: result.dynamicPortal,
         fallbackUsed: result.fallbackUsed,
         attemptedEndpoints: result.attemptedEndpoints,
         durationMs: Date.now() - started,

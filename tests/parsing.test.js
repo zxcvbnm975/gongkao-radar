@@ -151,3 +151,23 @@ test("collectSource switches to an official fallback when the primary endpoint f
     globalThis.fetch = originalFetch;
   }
 });
+
+test("collectSource identifies an accessible client-rendered official portal", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("<main><div id=app></div><script src=/assets/app.js></script></main>", { status: 200 });
+  try {
+    const result = await collectSource({
+      name: "年度公务员考录专题",
+      region: "全国",
+      url: "https://example.gov.cn/topic/",
+      endpoints: [{ url: "https://example.gov.cn/topic/", label: "年度专题", dynamicPortal: true }],
+      adapter: { titlePattern: "公务员|考试录用" },
+      official: true
+    }, { lightweight: true });
+    assert.equal(result.items.length, 0);
+    assert.equal(result.dynamicPortal, true);
+    assert.equal(result.endpointLabel, "年度专题");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
