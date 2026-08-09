@@ -5,6 +5,7 @@ const SOURCES = [
     region: "全国",
     badge: "国",
     url: "https://www.scs.gov.cn/",
+    adapter: { id: "scs", titlePattern: "公务员|国考|考试录用|公开遴选|公开选调|调剂|补充录用|面试|资格复审" },
     official: true
   },
   {
@@ -13,6 +14,7 @@ const SOURCES = [
     region: "上海",
     badge: "沪",
     url: "https://www.shacs.gov.cn/",
+    adapter: { id: "shanghai", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
   },
   {
@@ -21,6 +23,7 @@ const SOURCES = [
     region: "江苏",
     badge: "苏",
     url: "https://www.jszzb.gov.cn/tzgg/",
+    adapter: { id: "jiangsu", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
   },
   {
@@ -29,6 +32,7 @@ const SOURCES = [
     region: "浙江",
     badge: "浙",
     url: "https://gwy.zjks.gov.cn/",
+    adapter: { id: "zhejiang", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
   },
   {
@@ -37,6 +41,11 @@ const SOURCES = [
     region: "甘肃",
     badge: "甘",
     url: "https://www.gszg.gov.cn/26gsgwy/index.htm",
+    endpoints: [
+      { url: "https://www.gszg.gov.cn/26gsgwy/index.htm", label: "甘肃组工网" },
+      { url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", label: "甘肃人事考试网" }
+    ],
+    adapter: { id: "gansu-civil", titlePattern: "公务员|考试录用|公开遴选|公开选调|选调生|面试|资格复审" },
     official: true
   },
   {
@@ -45,6 +54,11 @@ const SOURCES = [
     region: "甘肃",
     badge: "考",
     url: "https://ks.rst.gansu.gov.cn/",
+    endpoints: [
+      { url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", label: "公务员事业单位考试栏目" },
+      { url: "https://ks.rst.gansu.gov.cn/ncms/index.shtml", label: "甘肃人事考试网首页" }
+    ],
+    adapter: { id: "gansu-exams", titlePattern: "公务员|事业单位|公开招聘|公开选聘|选调生|资格复审|笔试|面试" },
     official: true
   },
   {
@@ -54,6 +68,11 @@ const SOURCES = [
     city: "金昌市",
     badge: "金",
     url: "https://www.jczzb.cn/",
+    endpoints: [
+      { url: "https://www.jczzb.cn/", label: "金昌党建网" },
+      { url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", label: "甘肃人事考试网", titlePattern: "金昌.*(公务员|遴选|选调)|公务员.*金昌|遴选.*金昌|选调.*金昌" }
+    ],
+    adapter: { id: "jinchang-civil", titlePattern: "公务员|遴选|选调" },
     official: true
   },
   {
@@ -63,6 +82,11 @@ const SOURCES = [
     city: "武威市",
     badge: "武",
     url: "https://ww.gsdj.gov.cn/",
+    endpoints: [
+      { url: "https://ww.gsdj.gov.cn/", label: "甘肃党建武威平台" },
+      { url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", label: "甘肃人事考试网", titlePattern: "武威.*(公务员|遴选|选调)|公务员.*武威|遴选.*武威|选调.*武威" }
+    ],
+    adapter: { id: "wuwei-civil", titlePattern: "公务员|遴选|选调" },
     official: true
   },
   {
@@ -72,6 +96,11 @@ const SOURCES = [
     city: "张掖市",
     badge: "张",
     url: "https://www.zhangye.gov.cn/zyszfxxgk/fdzdgknr_5657/rsxx_5667/ghb.html",
+    endpoints: [
+      { url: "https://www.zhangye.gov.cn/zyszfxxgk/fdzdgknr_5657/rsxx_5667/ghb.html", label: "张掖市政府人事信息" },
+      { url: "https://www.gszg.gov.cn/26gsgwy/index.htm", label: "甘肃组工网", titlePattern: "张掖.*(公务员|遴选|选调)|公务员.*张掖|遴选.*张掖|选调.*张掖" }
+    ],
+    adapter: { id: "zhangye-civil", titlePattern: "公务员|遴选|选调" },
     official: true
   },
   {
@@ -81,6 +110,11 @@ const SOURCES = [
     badge: "事",
     url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks",
     track: "事业单位",
+    endpoints: [
+      { url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", label: "公务员事业单位考试栏目" },
+      { url: "https://ks.rst.gansu.gov.cn/ncms/index.shtml", label: "甘肃人事考试网首页" }
+    ],
+    adapter: { id: "gansu-institutions", titlePattern: "事业单位|事业编制|公开招聘|公开选聘|人才引进|引进.{0,15}(高层次|急需紧缺)|资格复审" },
     official: true
   },
   {
@@ -91,6 +125,11 @@ const SOURCES = [
     badge: "金",
     url: "http://rsj.jcs.gov.cn/",
     track: "事业单位",
+    endpoints: [
+      { url: "http://rsj.jcs.gov.cn/", label: "金昌市人社局" },
+      { url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", label: "甘肃人事考试网", titlePattern: "金昌.*(事业单位|事业编制|公开招聘|公开选聘|人才引进)|事业单位.*金昌|公开招聘.*金昌" }
+    ],
+    adapter: { id: "jinchang-institutions", titlePattern: "事业单位|事业编制|公开招聘|公开选聘|人才引进|引进.{0,15}(高层次|急需紧缺)" },
     official: true
   },
   {
@@ -101,6 +140,11 @@ const SOURCES = [
     badge: "武",
     url: "https://www.gswuwei.gov.cn/",
     track: "事业单位",
+    endpoints: [
+      { url: "https://www.gswuwei.gov.cn/", label: "武威市人民政府" },
+      { url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", label: "甘肃人事考试网", titlePattern: "武威.*(事业单位|事业编制|公开招聘|公开选聘|人才引进)|事业单位.*武威|公开招聘.*武威" }
+    ],
+    adapter: { id: "wuwei-institutions", titlePattern: "事业单位|事业编制|公开招聘|公开选聘|人才引进|引进.{0,15}(高层次|急需紧缺)" },
     official: true
   },
   {
@@ -111,6 +155,12 @@ const SOURCES = [
     badge: "张",
     url: "https://www.zhangye.gov.cn/rsj/dzdt/tzgg/",
     track: "事业单位",
+    endpoints: [
+      { url: "https://www.zhangye.gov.cn/rsj/dzdt/tzgg/", label: "张掖市人社局通知公告" },
+      { url: "https://www.zhangye.gov.cn/zyszfxxgk/fdzdgknr_5657/rsxx_5667/ghb.html", label: "张掖市政府人事信息" },
+      { url: "https://ks.rst.gansu.gov.cn/ncms/wzlb.shtml?mkbh=gwysydwks", label: "甘肃人事考试网", titlePattern: "张掖.*(事业单位|事业编制|公开招聘|公开选聘|人才引进|引进.{0,15}(高层次|急需紧缺))|事业单位.*张掖|公开招聘.*张掖" }
+    ],
+    adapter: { id: "zhangye-institutions", titlePattern: "事业单位|事业编制|公开招聘|公开选聘|人才引进|引进.{0,15}(高层次|急需紧缺)" },
     official: true
   },
   {
@@ -143,6 +193,7 @@ const INITIAL_SOURCE_BATCH_SIZE = 6;
 const INITIAL_SOURCE_TIMEOUT_MS = 3500;
 const REFRESH_LEASE_MS = 3 * 60 * 1000;
 const SOURCE_ALARM_STRATEGY = "source-alarm-v1";
+const SOURCE_CONFIG_VERSION = "2026-08-09-adapters-v1";
 const SEED_VERSION = "4";
 
 const SEED_ITEMS = [
@@ -489,21 +540,50 @@ function extractNearbyDate(html, index) {
   return match ? normalizeDate(match[0]) : null;
 }
 
+function extractAttribute(attributes, name) {
+  const pattern = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:["']([^"']*)["']|([^\\s>]+))`, "i");
+  const match = String(attributes).match(pattern);
+  return decodeHtml(match?.[1] || match?.[2] || "").trim();
+}
+
+function matchesConfiguredPattern(value, pattern) {
+  if (!pattern) return true;
+  try {
+    return new RegExp(pattern, "i").test(value);
+  } catch {
+    return true;
+  }
+}
+
+function extractAnchorTitle(attributes, body, source) {
+  const imageAlt = body.match(/<img\b[^>]*\balt\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+  const candidates = [
+    stripHtml(body),
+    stripHtml(extractAttribute(attributes, "title")),
+    stripHtml(extractAttribute(attributes, "aria-label")),
+    stripHtml(imageAlt)
+  ].filter(Boolean);
+  return candidates.find((title) => matchesConfiguredPattern(title, source.adapter?.titlePattern) && isRelevantTitle(title, source)) || candidates[0] || "";
+}
+
 export function parseListing(html, source) {
   const items = [];
   const seen = new Set();
-  const anchorPattern = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
   let match;
   while ((match = anchorPattern.exec(html)) && items.length < 20) {
-    const title = stripHtml(match[2]);
-    if (title.length < 8 || title.length > 150 || !isRelevantTitle(title, source)) continue;
+    const attributes = match[1];
+    const title = extractAnchorTitle(attributes, match[2], source);
+    if (title.length < 8 || title.length > 150 || !matchesConfiguredPattern(title, source.adapter?.titlePattern) || !isRelevantTitle(title, source)) continue;
+    const href = ["href", "data-href", "data-url"].map((name) => extractAttribute(attributes, name)).find((value) => value && !/^javascript:/i.test(value));
+    if (!href) continue;
     let articleUrl;
     try {
-      articleUrl = new URL(match[1], source.url).href;
+      articleUrl = new URL(href, source.listingUrl || source.url).href;
     } catch {
       continue;
     }
-    if (!/^https?:/.test(articleUrl) || seen.has(articleUrl)) continue;
+    if (!/^https?:/.test(articleUrl) || !matchesConfiguredPattern(articleUrl, source.adapter?.linkPattern) || seen.has(articleUrl)) continue;
     seen.add(articleUrl);
     items.push({
       title,
@@ -585,9 +665,62 @@ async function enrichItem(item) {
   }
 }
 
-async function collectSource(source, { lightweight = false } = {}) {
-  const html = await fetchText(source.url, lightweight ? INITIAL_SOURCE_TIMEOUT_MS : 12000, lightweight ? 1 : 2);
-  const candidates = parseListing(html, source);
+function sourceEndpoints(source) {
+  const endpoints = Array.isArray(source.endpoints) && source.endpoints.length ? source.endpoints : [{ url: source.url, label: "主入口" }];
+  return endpoints.map((endpoint, index) => typeof endpoint === "string"
+    ? { url: endpoint, label: index ? `备用入口 ${index}` : "主入口" }
+    : { ...endpoint, url: endpoint.url, label: endpoint.label || (index ? `备用入口 ${index}` : "主入口") });
+}
+
+export async function collectSource(source, { lightweight = false } = {}) {
+  const endpoints = sourceEndpoints(source);
+  const attemptedEndpoints = [];
+  let selected = null;
+  let candidates = [];
+  let lastError = null;
+  let accessibleEndpoint = null;
+
+  for (let index = 0; index < endpoints.length; index += 1) {
+    const endpoint = endpoints[index];
+    const started = Date.now();
+    try {
+      const html = await fetchText(endpoint.url, lightweight ? INITIAL_SOURCE_TIMEOUT_MS : 12000, lightweight ? 1 : 2);
+      const parsed = parseListing(html, {
+        ...source,
+        listingUrl: endpoint.url,
+        adapter: {
+          ...(source.adapter || {}),
+          ...(endpoint.titlePattern ? { titlePattern: endpoint.titlePattern } : {}),
+          ...(endpoint.linkPattern ? { linkPattern: endpoint.linkPattern } : {})
+        }
+      });
+      attemptedEndpoints.push({ url: endpoint.url, label: endpoint.label, ok: true, found: parsed.length, durationMs: Date.now() - started });
+      accessibleEndpoint ||= { ...endpoint, index };
+      if (parsed.length) {
+        selected = { ...endpoint, index };
+        candidates = parsed;
+        break;
+      }
+    } catch (error) {
+      lastError = error;
+      attemptedEndpoints.push({
+        url: endpoint.url,
+        label: endpoint.label,
+        ok: false,
+        found: 0,
+        durationMs: Date.now() - started,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  selected ||= accessibleEndpoint;
+  if (!selected) {
+    const error = new Error(lastError instanceof Error ? lastError.message : "全部官方入口访问失败");
+    error.attemptedEndpoints = attemptedEndpoints;
+    throw error;
+  }
+
   const links = candidates.slice(0, MAX_ITEMS_PER_SOURCE);
   const output = await Promise.all(links.map(async (item, index) => {
     if (!lightweight && index < MAX_DETAIL_PAGES_PER_SOURCE) return enrichItem(item);
@@ -601,7 +734,14 @@ async function collectSource(source, { lightweight = false } = {}) {
       recruitmentCount: null
     };
   }));
-  return { items: output, candidates: candidates.length };
+  return {
+    items: output,
+    candidates: candidates.length,
+    endpoint: selected.url,
+    endpointLabel: selected.label,
+    fallbackUsed: selected.index > 0,
+    attemptedEndpoints
+  };
 }
 
 function getStore(env) {
@@ -642,6 +782,10 @@ async function collectAllSources({ lightweight = false } = {}) {
             ok: true,
             found: result.items.length,
             candidates: result.candidates,
+            endpoint: result.endpoint,
+            endpointLabel: result.endpointLabel,
+            fallbackUsed: result.fallbackUsed,
+            attemptedEndpoints: result.attemptedEndpoints,
             durationMs: Date.now() - started,
             checkedAt: new Date().toISOString()
           }
@@ -658,7 +802,8 @@ async function collectAllSources({ lightweight = false } = {}) {
             found: 0,
             durationMs: Date.now() - started,
             checkedAt: new Date().toISOString(),
-            error: error instanceof Error ? error.message : String(error)
+            error: error instanceof Error ? error.message : String(error),
+            attemptedEndpoints: error?.attemptedEndpoints || []
           }
         };
       }
@@ -695,7 +840,7 @@ async function refreshAll(env, { lease: existingLease = null, lightweight = fals
   const response = await getStore(env).fetch("https://store.internal/ingest", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ items: collected, syncedAt, startedAt: lease.startedAt, report })
+    body: JSON.stringify({ items: collected, syncedAt, startedAt: lease.startedAt, report, sourceConfigVersion: SOURCE_CONFIG_VERSION })
   });
   const stored = await response.json();
   return { ...stored, report };
@@ -742,7 +887,7 @@ export default {
       await ensureSeeded(env);
       const response = await getStore(env).fetch("https://store.internal/stats");
       const stats = await response.json();
-      if (!stats.syncedAt && !stats.collecting) {
+      if ((!stats.syncedAt || stats.sourceConfigVersion !== SOURCE_CONFIG_VERSION) && !stats.collecting) {
         const scheduledResponse = await getStore(env).fetch("https://store.internal/schedule-refresh", { method: "POST" });
         const scheduled = await scheduledResponse.json();
         if (scheduled.granted) {
@@ -921,6 +1066,10 @@ export class NewsStore {
         ok: true,
         found: result.items.length,
         candidates: result.candidates,
+        endpoint: result.endpoint,
+        endpointLabel: result.endpointLabel,
+        fallbackUsed: result.fallbackUsed,
+        attemptedEndpoints: result.attemptedEndpoints,
         durationMs: Date.now() - started,
         checkedAt: new Date().toISOString()
       };
@@ -933,7 +1082,8 @@ export class NewsStore {
         found: 0,
         durationMs: Date.now() - started,
         checkedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        attemptedEndpoints: error?.attemptedEndpoints || []
       };
     }
 
@@ -963,8 +1113,10 @@ export class NewsStore {
     const reportsById = new Map([...nextReport, ...portalReports].map((report) => [report.sourceId, report]));
     const report = SOURCES.map((item) => reportsById.get(item.id));
     const syncedAt = new Date().toISOString();
+    const scheduledVersion = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_config_version'").toArray()[0]?.value || "unknown";
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('synced_at', ?)", syncedAt);
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('last_report', ?)", JSON.stringify(report));
+    this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('source_config_version', ?)", scheduledVersion);
     this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", syncedAt);
     this.ctx.storage.sql.exec("DELETE FROM metadata WHERE key IN ('pending_report', 'refresh_source_index')");
   }
@@ -984,6 +1136,7 @@ export class NewsStore {
       } else {
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('synced_at', ?)", body.syncedAt || new Date().toISOString());
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('last_report', ?)", JSON.stringify(body.report || []));
+        this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('source_config_version', ?)", body.sourceConfigVersion || "unknown");
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", body.startedAt || body.syncedAt || new Date().toISOString());
         this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_finished_at', ?)", body.syncedAt || new Date().toISOString());
       }
@@ -1017,6 +1170,7 @@ export class NewsStore {
       const nextStartedAt = new Date(now).toISOString();
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_started_at', ?)", nextStartedAt);
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_strategy', ?)", SOURCE_ALARM_STRATEGY);
+      this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_config_version', ?)", SOURCE_CONFIG_VERSION);
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('pending_report', '[]')");
       this.ctx.storage.sql.exec("INSERT OR REPLACE INTO metadata(key, value) VALUES ('refresh_source_index', '0')");
       await this.ctx.storage.setAlarm(now + 100);
@@ -1058,6 +1212,7 @@ export class NewsStore {
       const report = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'last_report'").toArray();
       const pendingReport = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'pending_report'").toArray();
       const strategy = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_strategy'").toArray()[0]?.value || null;
+      const sourceConfigVersion = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'source_config_version'").toArray()[0]?.value || null;
       const started = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_started_at'").toArray();
       const finished = this.ctx.storage.sql.exec("SELECT value FROM metadata WHERE key = 'refresh_finished_at'").toArray();
       const refreshStartedAt = started[0]?.value || null;
@@ -1069,6 +1224,7 @@ export class NewsStore {
         regions,
         syncedAt: synced[0]?.value || null,
         collecting: Boolean(strategy) && startedTime > finishedTime && Date.now() - startedTime < REFRESH_LEASE_MS,
+        sourceConfigVersion,
         refreshStartedAt,
         refreshFinishedAt,
         lastReport: pendingReport[0]?.value && startedTime > finishedTime

@@ -484,7 +484,8 @@ function renderSourceStatus(source, report) {
   if (!report.ok) {
     return `<span class="source-status error"><i></i>${scope} · 访问失败，稍后重试</span>`;
   }
-  const detail = report.found > 0 ? `收录 ${report.found} 条` : "可访问，暂无新公告";
+  const endpointNote = report.fallbackUsed ? ` · 已切换${escapeHtml(report.endpointLabel || "备用入口")}` : "";
+  const detail = report.found > 0 ? `收录 ${report.found} 条${endpointNote}` : `可访问，暂无新公告${endpointNote}`;
   return `<span class="source-status ready"><i></i>${scope} · ${detail}</span>`;
 }
 

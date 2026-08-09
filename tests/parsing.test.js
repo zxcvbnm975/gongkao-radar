@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyTrack, classifyType, detectCity, extractFields, normalizeDate, parseListing, stripHtml } from "../worker/src/index.js";
+import { classifyTrack, classifyType, collectSource, detectCity, extractFields, normalizeDate, parseListing, stripHtml } from "../worker/src/index.js";
 
 test("stripHtml removes markup and decodes common entities", () => {
   assert.equal(stripHtml("<p>招录&nbsp;<b>100</b>人 &amp; 报名</p>"), "招录 100 人 & 报名");
@@ -77,4 +77,57 @@ test("parseListing tags State Grid and tobacco recruitment notices", () => {
   const tobaccoSource = { name: "烟草招聘平台", region: "全国", track: "烟草系统", url: "https://example.com/", official: true };
   assert.equal(parseListing('<a href="/grid.html">2027年高校毕业生招聘公告</a>', gridSource)[0].track, "国家电网");
   assert.equal(parseListing('<a href="/tobacco.html">2027年度招聘岗位公告</a>', tobaccoSource)[0].track, "烟草系统");
+});
+
+test("parseListing applies a source adapter and reads title attributes", () => {
+  const source = {
+    name: "金昌市人社局",
+    region: "甘肃",
+    city: "金昌市",
+    track: "事业单位",
+    url: "https://example.gov.cn/list/",
+    adapter: { titlePattern: "金昌.*(事业单位|公开招聘)" },
+    official: true
+  };
+  const html = `
+    <a href="/meeting.html" title="全市工作会议召开"><span>查看详情</span></a>
+    <a data-href="/recruit.html" title="金昌市2027年事业单位公开招聘工作人员公告"><span>查看详情</span></a>`;
+  const items = parseListing(html, source);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, "金昌市2027年事业单位公开招聘工作人员公告");
+  assert.equal(items[0].articleUrl, "https://example.gov.cn/recruit.html");
+});
+
+test("collectSource switches to an official fallback when the primary endpoint fails", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("primary")) return new Response("upstream error", { status: 503 });
+    return new Response(`
+      <a href="/other.html">武威市2027年事业单位公开招聘工作人员公告</a>
+      <a href="/notice.html">金昌市2027年事业单位公开招聘工作人员公告</a>`, {
+      status: 200,
+      headers: { "Content-Type": "text/html" }
+    });
+  };
+  try {
+    const result = await collectSource({
+      name: "金昌市人社局",
+      region: "甘肃",
+      city: "金昌市",
+      track: "事业单位",
+      url: "https://primary.example.gov.cn/",
+      endpoints: [
+        { url: "https://primary.example.gov.cn/", label: "主入口" },
+        { url: "https://backup.example.gov.cn/list/", label: "省级备用入口", titlePattern: "金昌.*(事业单位|公开招聘)" }
+      ],
+      adapter: { titlePattern: "事业单位|公开招聘" },
+      official: true
+    }, { lightweight: true });
+    assert.equal(result.items.length, 1);
+    assert.equal(result.fallbackUsed, true);
+    assert.equal(result.endpointLabel, "省级备用入口");
+    assert.equal(result.attemptedEndpoints.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
