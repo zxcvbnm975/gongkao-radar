@@ -214,7 +214,7 @@ const INITIAL_SOURCE_BATCH_SIZE = 6;
 const INITIAL_SOURCE_TIMEOUT_MS = 3500;
 const REFRESH_LEASE_MS = 3 * 60 * 1000;
 const SOURCE_ALARM_STRATEGY = "source-alarm-v1";
-const SOURCE_CONFIG_VERSION = "2026-08-09-managed-sources-v1";
+const SOURCE_CONFIG_VERSION = "2026-08-09-reminders-v1";
 const SEED_VERSION = "4";
 const SOURCE_TRACKS = new Set(["公务员", "事业单位", "国家电网", "烟草系统"]);
 
@@ -311,6 +311,34 @@ export function normalizeSourceInput(input, { id, builtIn = false } = {}) {
   if (mode) source.mode = mode;
   if (builtIn) source.builtIn = true;
   return source;
+}
+
+export function canonicalAnnouncementKey(item = {}) {
+  const normalizedTitle = String(item.title || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s\u3000·•，。；：、“”‘’（）()【】\[\]《》<>—_-]+/g, "")
+    .replace(/^(关于|转发|转载)/, "")
+    .replace(/(通知|公告)$/, "");
+  return `${item.region || "全国"}|${item.track || classifyTrack(item.title)}|${normalizedTitle}`.slice(0, 700);
+}
+
+function normalizeSubscriptionFilters(input = {}) {
+  const allowedCities = new Set(["金昌市", "武威市", "张掖市"]);
+  const allowedTypes = new Set(["new", "updated", "deadline"]);
+  const cities = Array.isArray(input.cities) ? [...new Set(input.cities.filter((value) => allowedCities.has(value)))].slice(0, 3) : [];
+  const tracks = Array.isArray(input.tracks) ? [...new Set(input.tracks.filter((value) => SOURCE_TRACKS.has(value)))].slice(0, 4) : [];
+  const eventTypes = Array.isArray(input.eventTypes) ? [...new Set(input.eventTypes.filter((value) => allowedTypes.has(value)))].slice(0, 3) : ["new", "updated", "deadline"];
+  const keywords = Array.isArray(input.keywords)
+    ? [...new Set(input.keywords.map((value) => String(value).trim()).filter(Boolean))].slice(0, 10).map((value) => value.slice(0, 30))
+    : String(input.keywords || "").split(/[，,\s]+/).map((value) => value.trim()).filter(Boolean).slice(0, 10).map((value) => value.slice(0, 30));
+  const deadlineDays = Math.min(Math.max(Number(input.deadlineDays) || 3, 1), 14);
+  return { cities, tracks, eventTypes: eventTypes.length ? eventTypes : ["new", "updated", "deadline"], keywords, deadlineDays };
+}
+
+async function hashSecret(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 const SEED_ITEMS = [
@@ -1063,7 +1091,7 @@ function corsHeaders(request, env) {
   return {
     "Access-Control-Allow-Origin": selected || "null",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Subscription-Token",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin"
   };
@@ -1200,6 +1228,67 @@ export default {
       return json(await response.json(), { status: response.status }, request, env);
     }
 
+    const sourceRevisionsMatch = url.pathname.match(/^\/api\/admin\/sources\/([^/]+)\/revisions$/);
+    if (sourceRevisionsMatch && request.method === "GET") {
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
+      const id = decodeURIComponent(sourceRevisionsMatch[1]);
+      const response = await getStore(env).fetch(`https://store.internal/sources/${encodeURIComponent(id)}/revisions`);
+      return json(await response.json(), { status: response.status }, request, env);
+    }
+
+    const sourceRollbackMatch = url.pathname.match(/^\/api\/admin\/sources\/([^/]+)\/rollback\/(\d+)$/);
+    if (sourceRollbackMatch && request.method === "POST") {
+      const authError = adminAuthError(request, env);
+      if (authError) return authError;
+      const id = decodeURIComponent(sourceRollbackMatch[1]);
+      const response = await getStore(env).fetch(`https://store.internal/sources/${encodeURIComponent(id)}/rollback/${sourceRollbackMatch[2]}`, { method: "POST" });
+      return json(await response.json(), { status: response.status }, request, env);
+    }
+
+    if (url.pathname === "/api/subscriptions" && request.method === "POST") {
+      const filters = normalizeSubscriptionFilters(await request.json().catch(() => ({})));
+      const subscriptionId = crypto.randomUUID();
+      const editToken = `${crypto.randomUUID()}${crypto.randomUUID().replaceAll("-", "")}`;
+      const response = await getStore(env).fetch("https://store.internal/subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscriptionId, tokenHash: await hashSecret(editToken), filters })
+      });
+      return json({ ...(await response.json()), editToken }, { status: response.status }, request, env);
+    }
+
+    const subscriptionActionMatch = url.pathname.match(/^\/api\/subscriptions\/([^/]+)\/(reminders|seen)$/);
+    if (subscriptionActionMatch && ((subscriptionActionMatch[2] === "reminders" && request.method === "GET") || (subscriptionActionMatch[2] === "seen" && request.method === "POST"))) {
+      await ensureSeeded(env);
+      const editToken = request.headers.get("X-Subscription-Token");
+      if (!editToken) return json({ error: "缺少订阅凭证" }, { status: 401 }, request, env);
+      const id = decodeURIComponent(subscriptionActionMatch[1]);
+      const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
+      const tokenHash = await hashSecret(editToken);
+      const response = await getStore(env).fetch(`https://store.internal/subscriptions/${encodeURIComponent(id)}/${subscriptionActionMatch[2]}`, {
+        method: request.method,
+        headers: { "Content-Type": "application/json", "X-Token-Hash": tokenHash },
+        body: request.method === "POST" ? JSON.stringify({ eventKeys: body.eventKeys }) : undefined
+      });
+      return json(await response.json(), { status: response.status }, request, env);
+    }
+
+    const subscriptionMatch = url.pathname.match(/^\/api\/subscriptions\/([^/]+)$/);
+    if (subscriptionMatch && ["GET", "PUT", "DELETE"].includes(request.method)) {
+      const editToken = request.headers.get("X-Subscription-Token");
+      if (!editToken) return json({ error: "缺少订阅凭证" }, { status: 401 }, request, env);
+      const id = decodeURIComponent(subscriptionMatch[1]);
+      const body = request.method === "PUT" ? await request.json().catch(() => ({})) : {};
+      const tokenHash = await hashSecret(editToken);
+      const response = await getStore(env).fetch(`https://store.internal/subscriptions/${encodeURIComponent(id)}`, {
+        method: request.method,
+        headers: { "Content-Type": "application/json", "X-Token-Hash": tokenHash },
+        body: request.method === "PUT" ? JSON.stringify({ filters: normalizeSubscriptionFilters(body) }) : undefined
+      });
+      return json(await response.json(), { status: response.status }, request, env);
+    }
+
     if (url.pathname === "/api/stats" && request.method === "GET") {
       await ensureSeeded(env);
       const sourceSet = await getManagedSources(env);
@@ -1272,6 +1361,10 @@ export class NewsStore {
           exam_date TEXT,
           recruitment_count INTEGER,
           official INTEGER NOT NULL DEFAULT 1,
+          canonical_key TEXT,
+          version_count INTEGER NOT NULL DEFAULT 1,
+          last_changed_at TEXT,
+          change_fields TEXT,
           fetched_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at DESC);
@@ -1296,12 +1389,62 @@ export class NewsStore {
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_source_revisions_source ON source_revisions(source_id, revision_id DESC);
+        CREATE TABLE IF NOT EXISTS article_versions (
+          version_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          article_id TEXT NOT NULL,
+          version_number INTEGER NOT NULL,
+          snapshot_json TEXT NOT NULL,
+          change_fields TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(article_id, version_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_article_versions_article ON article_versions(article_id, version_number DESC);
+        CREATE TABLE IF NOT EXISTS article_events (
+          event_key TEXT PRIMARY KEY,
+          article_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          change_fields TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_article_events_created ON article_events(created_at DESC);
+        CREATE TABLE IF NOT EXISTS article_sources (
+          article_url TEXT PRIMARY KEY,
+          article_id TEXT NOT NULL,
+          source_name TEXT NOT NULL,
+          source_url TEXT,
+          first_seen_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_article_sources_article ON article_sources(article_id);
+        CREATE TABLE IF NOT EXISTS subscriptions (
+          subscription_id TEXT PRIMARY KEY,
+          token_hash TEXT NOT NULL,
+          filters_json TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS subscription_deliveries (
+          subscription_id TEXT NOT NULL,
+          event_key TEXT NOT NULL,
+          seen_at TEXT NOT NULL,
+          PRIMARY KEY(subscription_id, event_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_subscription_deliveries_subscription ON subscription_deliveries(subscription_id, seen_at DESC);
       `);
       const articleColumns = this.ctx.storage.sql.exec("PRAGMA table_info(articles)").toArray().map((column) => column.name);
       if (!articleColumns.includes("city")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN city TEXT");
       if (!articleColumns.includes("priority")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
       if (!articleColumns.includes("track")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN track TEXT NOT NULL DEFAULT '公务员'");
+      if (!articleColumns.includes("canonical_key")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN canonical_key TEXT");
+      if (!articleColumns.includes("version_count")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN version_count INTEGER NOT NULL DEFAULT 1");
+      if (!articleColumns.includes("last_changed_at")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN last_changed_at TEXT");
+      if (!articleColumns.includes("change_fields")) this.ctx.storage.sql.exec("ALTER TABLE articles ADD COLUMN change_fields TEXT");
       this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS idx_articles_priority ON articles(priority DESC, published_at DESC)");
+      this.ctx.storage.sql.exec("CREATE INDEX IF NOT EXISTS idx_articles_canonical ON articles(canonical_key)");
+      for (const row of this.ctx.storage.sql.exec("SELECT id, title, region, track FROM articles WHERE canonical_key IS NULL OR canonical_key = ''").toArray()) {
+        this.ctx.storage.sql.exec("UPDATE articles SET canonical_key = ?, last_changed_at = COALESCE(last_changed_at, fetched_at) WHERE id = ?", canonicalAnnouncementKey(row), row.id);
+      }
     });
   }
 
@@ -1324,6 +1467,10 @@ export class NewsStore {
       examDate: row.exam_date,
       recruitmentCount: row.recruitment_count,
       official: Boolean(row.official),
+      versionCount: Number(row.version_count) || 1,
+      lastChangedAt: row.last_changed_at || null,
+      changeFields: row.change_fields ? JSON.parse(row.change_fields) : [],
+      mirrorCount: Number(row.mirror_count) || undefined,
       fetchedAt: row.fetched_at
     };
   }
@@ -1360,6 +1507,72 @@ export class NewsStore {
     );
   }
 
+  subscriptionRow(id, tokenHash) {
+    const row = this.ctx.storage.sql.exec("SELECT * FROM subscriptions WHERE subscription_id = ? AND enabled = 1", id).toArray()[0];
+    return row && row.token_hash === tokenHash ? row : null;
+  }
+
+  matchesSubscription(item, filters) {
+    if (filters.cities?.length && !filters.cities.includes(item.city)) return false;
+    if (filters.tracks?.length && !filters.tracks.includes(item.track)) return false;
+    if (filters.keywords?.length) {
+      const haystack = `${item.title || ""} ${item.summary || ""}`.toLowerCase();
+      if (!filters.keywords.some((keyword) => haystack.includes(String(keyword).toLowerCase()))) return false;
+    }
+    return true;
+  }
+
+  subscriptionReminders(id, row) {
+    const filters = JSON.parse(row.filters_json);
+    const seenRows = this.ctx.storage.sql.exec("SELECT event_key FROM subscription_deliveries WHERE subscription_id = ?", id).toArray();
+    const seen = new Set(seenRows.map((item) => item.event_key));
+    const reminders = [];
+    if (filters.eventTypes.includes("new") || filters.eventTypes.includes("updated")) {
+      const eventRows = this.ctx.storage.sql.exec(`
+        SELECT a.*, e.event_key AS reminder_event_key, e.event_type AS reminder_event_type,
+          e.change_fields AS reminder_change_fields, e.created_at AS reminder_created_at,
+          (SELECT COUNT(*) FROM article_sources mirrors WHERE mirrors.article_id = a.id) AS mirror_count
+        FROM article_events e
+        JOIN articles a ON a.id = e.article_id
+        WHERE julianday(e.created_at) >= julianday('now', '-45 days')
+        ORDER BY e.created_at DESC
+        LIMIT 150
+      `).toArray();
+      for (const eventRow of eventRows) {
+        if (!filters.eventTypes.includes(eventRow.reminder_event_type) || seen.has(eventRow.reminder_event_key)) continue;
+        const item = this.rowToItem(eventRow);
+        if (!this.matchesSubscription(item, filters)) continue;
+        reminders.push({
+          eventKey: eventRow.reminder_event_key,
+          eventType: eventRow.reminder_event_type,
+          eventAt: eventRow.reminder_created_at,
+          changeFields: eventRow.reminder_change_fields ? JSON.parse(eventRow.reminder_change_fields) : [],
+          item
+        });
+      }
+    }
+    if (filters.eventTypes.includes("deadline")) {
+      const deadlineRows = this.ctx.storage.sql.exec(`
+        SELECT articles.*, (SELECT COUNT(*) FROM article_sources mirrors WHERE mirrors.article_id = articles.id) AS mirror_count
+        FROM articles
+        WHERE registration_end IS NOT NULL
+          AND julianday(registration_end) >= julianday('now')
+          AND julianday(registration_end) <= julianday('now', '+' || ? || ' days')
+        ORDER BY registration_end ASC
+        LIMIT 100
+      `, filters.deadlineDays).toArray();
+      for (const deadlineRow of deadlineRows) {
+        const eventKey = `${deadlineRow.id}:deadline:${deadlineRow.registration_end}`;
+        if (seen.has(eventKey)) continue;
+        const item = this.rowToItem(deadlineRow);
+        if (!this.matchesSubscription(item, filters)) continue;
+        reminders.push({ eventKey, eventType: "deadline", eventAt: item.registrationEnd, changeFields: [], item });
+      }
+    }
+    reminders.sort((a, b) => new Date(b.eventAt || 0) - new Date(a.eventAt || 0));
+    return { items: reminders.slice(0, 30), total: reminders.length, filters };
+  }
+
   managedSources({ all = false } = {}) {
     this.ctx.storage.sql.exec("DELETE FROM sources WHERE built_in = 0 AND deleted_at IS NOT NULL AND julianday(deleted_at) < julianday('now', '-30 days')");
     const rows = this.ctx.storage.sql.exec(
@@ -1375,20 +1588,36 @@ export class NewsStore {
     let changed = 0;
     for (const item of items) {
       if (!item?.id || !item?.title || !item?.articleUrl) continue;
-      const existingByUrl = this.ctx.storage.sql.exec("SELECT id FROM articles WHERE article_url = ? LIMIT 1", item.articleUrl).toArray()[0];
-      const effectiveId = existingByUrl?.id || item.id;
+      const track = item.track || classifyTrack(item.title);
+      const canonicalKey = canonicalAnnouncementKey({ ...item, track });
+      const existingByUrl = this.ctx.storage.sql.exec("SELECT * FROM articles WHERE article_url = ? LIMIT 1", item.articleUrl).toArray()[0];
+      const existingByCanonical = existingByUrl || this.ctx.storage.sql.exec("SELECT * FROM articles WHERE canonical_key = ? LIMIT 1", canonicalKey).toArray()[0];
+      const existing = existingByUrl || existingByCanonical;
+      const effectiveId = existing?.id || item.id;
+      const meaningfulSummary = item.summary && !item.summary.startsWith("详细报考条件和时间节点请查看官方原文") ? item.summary : null;
+      const comparableFields = [
+        ["title", "title", item.title],
+        ["summary", "summary", meaningfulSummary],
+        ["publishedAt", "published_at", item.publishedAt],
+        ["registrationStart", "registration_start", item.registrationStart],
+        ["registrationEnd", "registration_end", item.registrationEnd],
+        ["examDate", "exam_date", item.examDate],
+        ["recruitmentCount", "recruitment_count", Number.isFinite(item.recruitmentCount) ? item.recruitmentCount : null]
+      ];
+      const changeFields = existing
+        ? comparableFields.filter(([, column, nextValue]) => nextValue !== null && nextValue !== undefined && String(existing[column] ?? "") !== String(nextValue)).map(([field]) => field)
+        : [];
+      const versionCount = existing ? (Number(existing.version_count) || 1) + (changeFields.length ? 1 : 0) : 1;
+      const lastChangedAt = existing ? (changeFields.length ? now : existing.last_changed_at) : now;
       this.ctx.storage.sql.exec(
         `INSERT INTO articles (
           id, title, summary, source_name, source_url, article_url, region, city, priority, track, type,
           published_at, registration_start, registration_end, exam_date,
-          recruitment_count, official, fetched_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          recruitment_count, official, canonical_key, version_count, last_changed_at, change_fields, fetched_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
           summary = CASE WHEN length(excluded.summary) > 20 THEN excluded.summary ELSE articles.summary END,
-          source_name = excluded.source_name,
-          source_url = excluded.source_url,
-          article_url = excluded.article_url,
           region = excluded.region,
           city = excluded.city,
           priority = excluded.priority,
@@ -1400,17 +1629,21 @@ export class NewsStore {
           exam_date = COALESCE(excluded.exam_date, articles.exam_date),
           recruitment_count = COALESCE(excluded.recruitment_count, articles.recruitment_count),
           official = excluded.official,
+          canonical_key = excluded.canonical_key,
+          version_count = excluded.version_count,
+          last_changed_at = COALESCE(excluded.last_changed_at, articles.last_changed_at),
+          change_fields = excluded.change_fields,
           fetched_at = excluded.fetched_at`,
         effectiveId,
         item.title,
-        item.summary || null,
+        meaningfulSummary || item.summary || null,
         item.sourceName || "官方来源",
         item.sourceUrl || item.articleUrl,
         item.articleUrl,
         item.region || "全国",
         item.city || null,
         item.priority ? 1 : 0,
-        item.track || classifyTrack(item.title),
+        track,
         item.type || classifyType(item.title),
         item.publishedAt || null,
         item.registrationStart || null,
@@ -1418,8 +1651,45 @@ export class NewsStore {
         item.examDate || null,
         Number.isFinite(item.recruitmentCount) ? item.recruitmentCount : null,
         item.official === false ? 0 : 1,
+        canonicalKey,
+        versionCount,
+        lastChangedAt,
+        JSON.stringify(changeFields),
         now
       );
+
+      this.ctx.storage.sql.exec(
+        `INSERT INTO article_sources(article_url, article_id, source_name, source_url, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(article_url) DO UPDATE SET article_id = excluded.article_id, source_name = excluded.source_name, source_url = excluded.source_url, last_seen_at = excluded.last_seen_at`,
+        item.articleUrl,
+        effectiveId,
+        item.sourceName || "官方来源",
+        item.sourceUrl || item.articleUrl,
+        now,
+        now
+      );
+
+      if (!existing || changeFields.length) {
+        const updatedRow = this.ctx.storage.sql.exec("SELECT * FROM articles WHERE id = ?", effectiveId).one();
+        this.ctx.storage.sql.exec(
+          "INSERT OR IGNORE INTO article_versions(article_id, version_number, snapshot_json, change_fields, created_at) VALUES (?, ?, ?, ?, ?)",
+          effectiveId,
+          versionCount,
+          JSON.stringify(this.rowToItem(updatedRow)),
+          JSON.stringify(changeFields),
+          now
+        );
+        const eventType = existing ? "updated" : "new";
+        this.ctx.storage.sql.exec(
+          "INSERT OR IGNORE INTO article_events(event_key, article_id, event_type, change_fields, created_at) VALUES (?, ?, ?, ?, ?)",
+          `${effectiveId}:${eventType}:${versionCount}`,
+          effectiveId,
+          eventType,
+          JSON.stringify(changeFields),
+          now
+        );
+      }
       changed += 1;
     }
     return changed;
@@ -1509,6 +1779,56 @@ export class NewsStore {
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/subscriptions" && request.method === "POST") {
+      const body = await request.json();
+      const now = new Date().toISOString();
+      this.ctx.storage.sql.exec(
+        "INSERT INTO subscriptions(subscription_id, token_hash, filters_json, enabled, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
+        body.subscriptionId,
+        body.tokenHash,
+        JSON.stringify(body.filters),
+        now,
+        now
+      );
+      return Response.json({ ok: true, subscriptionId: body.subscriptionId, filters: body.filters }, { status: 201 });
+    }
+
+    const subscriptionActionMatch = url.pathname.match(/^\/subscriptions\/([^/]+)\/(reminders|seen)$/);
+    if (subscriptionActionMatch) {
+      const id = decodeURIComponent(subscriptionActionMatch[1]);
+      const body = await request.json().catch(() => ({}));
+      const row = this.subscriptionRow(id, request.headers.get("X-Token-Hash"));
+      if (!row) return Response.json({ error: "订阅不存在或凭证无效" }, { status: 401 });
+      if (subscriptionActionMatch[2] === "reminders" && request.method === "GET") return Response.json(this.subscriptionReminders(id, row));
+      if (subscriptionActionMatch[2] === "seen" && request.method === "POST") {
+        const now = new Date().toISOString();
+        for (const eventKey of Array.isArray(body.eventKeys) ? body.eventKeys.slice(0, 100) : []) {
+          if (!eventKey || String(eventKey).length > 500) continue;
+          this.ctx.storage.sql.exec("INSERT OR REPLACE INTO subscription_deliveries(subscription_id, event_key, seen_at) VALUES (?, ?, ?)", id, String(eventKey), now);
+        }
+        return Response.json({ ok: true });
+      }
+    }
+
+    const subscriptionMatch = url.pathname.match(/^\/subscriptions\/([^/]+)$/);
+    if (subscriptionMatch) {
+      const id = decodeURIComponent(subscriptionMatch[1]);
+      const body = await request.json().catch(() => ({}));
+      const row = this.subscriptionRow(id, request.headers.get("X-Token-Hash"));
+      if (!row) return Response.json({ error: "订阅不存在或凭证无效" }, { status: 401 });
+      if (request.method === "GET") return Response.json({ subscriptionId: id, filters: JSON.parse(row.filters_json), updatedAt: row.updated_at });
+      if (request.method === "PUT") {
+        const now = new Date().toISOString();
+        this.ctx.storage.sql.exec("UPDATE subscriptions SET filters_json = ?, updated_at = ? WHERE subscription_id = ?", JSON.stringify(body.filters), now, id);
+        return Response.json({ ok: true, subscriptionId: id, filters: body.filters, updatedAt: now });
+      }
+      if (request.method === "DELETE") {
+        this.ctx.storage.sql.exec("DELETE FROM subscription_deliveries WHERE subscription_id = ?", id);
+        this.ctx.storage.sql.exec("DELETE FROM subscriptions WHERE subscription_id = ?", id);
+        return Response.json({ ok: true });
+      }
+    }
 
     if (url.pathname === "/sources/seed" && request.method === "POST") {
       const body = await request.json();
@@ -1621,6 +1941,40 @@ export class NewsStore {
       return Response.json({ ok: true, item: this.rowToSource(this.ctx.storage.sql.exec("SELECT * FROM sources WHERE id = ?", id).one()), version });
     }
 
+    const sourceRevisionsMatch = url.pathname.match(/^\/sources\/([^/]+)\/revisions$/);
+    if (sourceRevisionsMatch && request.method === "GET") {
+      const id = decodeURIComponent(sourceRevisionsMatch[1]);
+      const exists = this.ctx.storage.sql.exec("SELECT id FROM sources WHERE id = ?", id).toArray()[0];
+      if (!exists) return Response.json({ error: "来源不存在" }, { status: 404 });
+      const rows = this.ctx.storage.sql.exec("SELECT revision_id, action, config_json, created_at FROM source_revisions WHERE source_id = ? ORDER BY revision_id DESC LIMIT 30", id).toArray();
+      return Response.json({ items: rows.map((revision) => ({
+        revisionId: revision.revision_id,
+        action: revision.action,
+        config: revision.config_json ? JSON.parse(revision.config_json) : null,
+        createdAt: revision.created_at
+      })) });
+    }
+
+    const sourceRollbackMatch = url.pathname.match(/^\/sources\/([^/]+)\/rollback\/(\d+)$/);
+    if (sourceRollbackMatch && request.method === "POST") {
+      const id = decodeURIComponent(sourceRollbackMatch[1]);
+      const row = this.ctx.storage.sql.exec("SELECT * FROM sources WHERE id = ?", id).toArray()[0];
+      if (!row) return Response.json({ error: "来源不存在" }, { status: 404 });
+      const revision = this.ctx.storage.sql.exec("SELECT config_json FROM source_revisions WHERE source_id = ? AND revision_id = ?", id, Number(sourceRollbackMatch[2])).toArray()[0];
+      if (!revision?.config_json) return Response.json({ error: "该历史版本无法恢复" }, { status: 400 });
+      let restored;
+      try {
+        restored = normalizeSourceInput(JSON.parse(revision.config_json), { id, builtIn: Boolean(row.built_in) });
+      } catch (error) {
+        return Response.json({ error: `历史配置已失效：${error instanceof Error ? error.message : String(error)}` }, { status: 400 });
+      }
+      const now = new Date().toISOString();
+      this.ctx.storage.sql.exec("UPDATE sources SET config_json = ?, customized = 1, enabled = 1, deleted_at = NULL, updated_at = ? WHERE id = ?", JSON.stringify(restored), now, id);
+      this.recordSourceRevision(id, `rollback:${sourceRollbackMatch[2]}`, restored);
+      const version = this.bumpSourceVersion();
+      return Response.json({ ok: true, item: this.rowToSource(this.ctx.storage.sql.exec("SELECT * FROM sources WHERE id = ?", id).one()), version });
+    }
+
     if ((url.pathname === "/seed" || url.pathname === "/ingest") && request.method === "POST") {
       const body = await request.json();
       if (url.pathname === "/seed") {
@@ -1689,7 +2043,12 @@ export class NewsStore {
 
     if (url.pathname === "/news" && request.method === "GET") {
       const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 200);
-      const rows = this.ctx.storage.sql.exec("SELECT * FROM articles ORDER BY priority DESC, COALESCE(published_at, fetched_at) DESC LIMIT ?", limit).toArray();
+      const rows = this.ctx.storage.sql.exec(`
+        SELECT articles.*, (SELECT COUNT(*) FROM article_sources mirrors WHERE mirrors.article_id = articles.id) AS mirror_count
+        FROM articles
+        ORDER BY priority DESC, COALESCE(published_at, fetched_at) DESC
+        LIMIT ?
+      `, limit).toArray();
       let items = rows.map((row) => this.rowToItem(row));
       const region = url.searchParams.get("region");
       const track = url.searchParams.get("track");

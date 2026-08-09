@@ -19,6 +19,7 @@
       <nav aria-label="主导航">
         <a class="active" href="#news">最新资讯</a>
         <a href="#calendar">考试日历</a>
+        <a href="#reminders">订阅提醒</a>
         <a href="#sources">官方来源</a>
         <a href="/admin.html">来源管理</a>
       </nav>
@@ -34,6 +35,7 @@
           <div class="hero-actions">
             <a class="button primary" href="#news">查看最新资讯 <span>↘</span></a>
             <button class="button secondary" id="refresh-button" type="button">重新加载</button>
+            <button class="button secondary" id="subscribe-button" type="button">设置提醒</button>
           </div>
         </div>
         <div class="hero-card" aria-label="近期关键节点">
@@ -119,6 +121,13 @@
         </div>
 
         <aside class="sidebar">
+          <section class="side-card reminder-card" id="reminders">
+            <div class="side-card-heading"><div><p>REMINDERS</p><h2>订阅提醒</h2></div><span id="reminder-count">0 条</span></div>
+            <p class="reminder-status" id="reminder-status">按城市、招录方向和关键词订阅，打开网站时自动检查。</p>
+            <div id="reminder-list" class="reminder-list"></div>
+            <div class="reminder-actions"><button id="manage-subscription" type="button">设置订阅</button><button id="mark-reminders-read" type="button" hidden>全部已读</button></div>
+          </section>
+
           <section class="side-card calendar-card" id="calendar">
             <div class="side-card-heading"><div><p>CALENDAR</p><h2>考试日历</h2></div><span id="calendar-month"></span></div>
             <div id="calendar-list" class="calendar-list"><div class="skeleton tall"></div></div>
@@ -139,6 +148,19 @@
       <p>本站仅聚合公开信息，不是政府官方网站。报考前请务必核对官方原文。</p>
       <p>数据每日自动更新 · <span id="footer-updated">尚未同步</span></p>
     </footer>
+
+    <dialog id="subscription-dialog" class="subscription-dialog">
+      <form id="subscription-form" method="dialog">
+        <div class="subscription-heading"><div><p class="section-kicker">PERSONAL ALERTS</p><h2>设置精准提醒</h2><p>订阅保存在服务器；本设备保存匿名凭证。打开网站时会检查新公告、内容变更和报名截止提醒。</p></div><button id="close-subscription" type="button" aria-label="关闭">×</button></div>
+        <fieldset><legend>重点城市</legend><div class="choice-grid"><label><input type="checkbox" name="cities" value="金昌市" />金昌市</label><label><input type="checkbox" name="cities" value="武威市" />武威市</label><label><input type="checkbox" name="cities" value="张掖市" />张掖市</label></div></fieldset>
+        <fieldset><legend>招录方向</legend><div class="choice-grid"><label><input type="checkbox" name="tracks" value="公务员" />公务员</label><label><input type="checkbox" name="tracks" value="事业单位" />事业单位</label><label><input type="checkbox" name="tracks" value="国家电网" />国家电网</label><label><input type="checkbox" name="tracks" value="烟草系统" />烟草系统</label></div></fieldset>
+        <label class="keyword-field"><span>关注关键词</span><input name="keywords" placeholder="例如：应届生、不限专业、计算机（用逗号分隔）" /></label>
+        <fieldset><legend>提醒类型</legend><div class="choice-grid"><label><input type="checkbox" name="eventTypes" value="new" checked />新公告</label><label><input type="checkbox" name="eventTypes" value="updated" checked />公告内容变更</label><label><input type="checkbox" name="eventTypes" value="deadline" checked />报名即将截止</label></div></fieldset>
+        <div class="subscription-options"><label><span>提前提醒</span><select name="deadlineDays"><option value="1">截止前 1 天</option><option value="3" selected>截止前 3 天</option><option value="7">截止前 7 天</option></select></label><label class="notify-choice"><input type="checkbox" name="browserNotifications" />允许浏览器通知</label></div>
+        <p id="subscription-message" class="subscription-message" role="alert"></p>
+        <div class="subscription-dialog-actions"><button class="button secondary" id="delete-subscription" type="button" hidden>删除订阅</button><button class="button primary" type="submit">保存订阅</button></div>
+      </form>
+    </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="/config.js" onerror="this.remove()"></script>

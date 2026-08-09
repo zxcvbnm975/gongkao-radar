@@ -28,6 +28,9 @@ const els = {
   testDuration: document.querySelector("#test-duration"),
   testSummary: document.querySelector("#test-summary"),
   testPreview: document.querySelector("#test-preview"),
+  historyDialog: document.querySelector("#history-dialog"),
+  historyTitle: document.querySelector("#history-title"),
+  historyList: document.querySelector("#history-list"),
   saveButton: document.querySelector("#save-source"),
   testButton: document.querySelector("#test-source"),
   toast: document.querySelector("#toast")
@@ -87,6 +90,7 @@ function renderSources() {
       const actions = source.deletedAt
         ? `<button class="small-button" data-action="restore" data-id="${escapeHtml(source.id)}">恢复</button>`
         : `<button class="small-button" data-action="edit" data-id="${escapeHtml(source.id)}">编辑</button>
+           <button class="small-button" data-action="history" data-id="${escapeHtml(source.id)}">历史</button>
            <button class="small-button" data-action="${source.enabled ? "disable" : "enable"}" data-id="${escapeHtml(source.id)}">${source.enabled ? "停用" : "启用"}</button>
            ${source.builtIn && source.customized ? `<button class="small-button" data-action="reset" data-id="${escapeHtml(source.id)}">恢复默认</button>` : ""}
            <button class="small-button danger" data-action="delete" data-id="${escapeHtml(source.id)}">${source.builtIn ? "停用" : "删除"}</button>`;
@@ -272,6 +276,7 @@ async function sourceAction(id, action) {
   const source = state.sources.find((item) => item.id === id);
   if (!source) return;
   if (action === "edit") return openEditor(source);
+  if (action === "history") return openHistory(source);
   if (action === "delete" && !confirm(source.builtIn ? `停用“${source.name}”？它不会被永久删除。` : `删除“${source.name}”？30 天内仍可从本页恢复。`)) return;
   if (action === "reset" && !confirm(`将“${source.name}”恢复为系统默认配置？手动修改将被覆盖。`)) return;
   try {
@@ -281,6 +286,24 @@ async function sourceAction(id, action) {
     await loadDashboard();
   } catch (error) {
     showToast(error.message);
+  }
+}
+
+async function openHistory(source) {
+  els.historyTitle.textContent = `${source.name} · 修改历史`;
+  els.historyList.innerHTML = '<div class="empty-admin">正在读取历史版本…</div>';
+  els.historyDialog.showModal();
+  try {
+    const data = await request(`/api/admin/sources/${encodeURIComponent(source.id)}/revisions`);
+    const actionLabels = { create: "创建来源", update: "修改配置", seed: "写入系统默认", "seed-update": "更新系统默认", disable: "停用来源", enable: "启用来源", restore: "恢复来源", reset: "恢复系统默认", delete: "删除来源" };
+    els.historyList.innerHTML = data.items?.length ? data.items.map((revision, index) => {
+      const action = revision.action.startsWith("rollback:") ? "回滚历史版本" : actionLabels[revision.action] || revision.action;
+      const name = revision.config?.name || source.name;
+      const endpoints = revision.config?.endpoints?.length || 0;
+      return `<article class="history-item"><div><strong>${escapeHtml(action)}</strong><span>${escapeHtml(new Date(revision.createdAt).toLocaleString("zh-CN"))} · ${escapeHtml(name)}${endpoints ? ` · ${endpoints} 个入口` : ""}</span></div>${revision.config && index > 0 ? `<button class="small-button" data-rollback="${revision.revisionId}" data-id="${escapeHtml(source.id)}">恢复此版本</button>` : ""}</article>`;
+    }).join("") : '<div class="empty-admin">暂无历史版本</div>';
+  } catch (error) {
+    els.historyList.innerHTML = `<div class="empty-admin">${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -302,6 +325,7 @@ els.authForm.addEventListener("submit", async (event) => {
 document.querySelector("#add-source").addEventListener("click", () => openEditor());
 document.querySelector("#reload-sources").addEventListener("click", () => loadDashboard().then(() => showToast("来源状态已刷新")).catch((error) => showToast(error.message)));
 document.querySelector("#close-dialog").addEventListener("click", () => els.dialog.close());
+document.querySelector("#close-history").addEventListener("click", () => els.historyDialog.close());
 document.querySelector("#add-endpoint").addEventListener("click", () => addEndpoint());
 els.search.addEventListener("input", renderSources);
 els.list.addEventListener("click", (event) => {
@@ -318,6 +342,18 @@ els.endpointList.addEventListener("click", (event) => {
   } else if (button.dataset.move === "up" && row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
   else if (button.dataset.move === "down" && row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row);
   renumberEndpoints();
+});
+els.historyList.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-rollback]");
+  if (!button || !confirm("恢复到这个历史版本？当前配置仍会保留在历史记录中。")) return;
+  try {
+    await request(`/api/admin/sources/${encodeURIComponent(button.dataset.id)}/rollback/${button.dataset.rollback}`, { method: "POST" });
+    els.historyDialog.close();
+    showToast("历史版本已恢复，系统将重新检测");
+    await loadDashboard();
+  } catch (error) {
+    showToast(error.message);
+  }
 });
 els.testButton.addEventListener("click", testCurrentSource);
 els.form.addEventListener("submit", (event) => { event.preventDefault(); if (!state.busy) saveSource(); });

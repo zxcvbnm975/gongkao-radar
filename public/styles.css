@@ -149,6 +149,40 @@ main { overflow: hidden; }
 .source-status.checking i { background: var(--accent); animation: pulse 1.2s infinite; }
 .source-status.portal i { background: #8b6d3f; }
 
+.reminder-status { margin: 14px 0 8px; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.reminder-list { display: grid; gap: 7px; margin-top: 12px; }
+.reminder-item { padding: 11px; border-left: 3px solid var(--accent); background: #f5f0e5; }
+.reminder-item.updated { border-left-color: #8b6d3f; }
+.reminder-item.deadline { border-left-color: #b75342; }
+.reminder-item a { display: block; text-decoration: none; font-size: 11px; font-weight: 700; line-height: 1.5; }
+.reminder-item a:hover { color: var(--accent); }
+.reminder-item span { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; }
+.reminder-actions { display: flex; gap: 7px; margin-top: 14px; }
+.reminder-actions button { flex: 1; min-height: 34px; border: 1px solid var(--line); color: var(--ink); background: transparent; font-size: 10px; cursor: pointer; }
+.reminder-actions button:hover { border-color: var(--ink); background: var(--green-soft); }
+
+.subscription-dialog { width: min(680px, calc(100% - 28px)); max-height: calc(100vh - 34px); border: 0; padding: 0; color: var(--ink); background: var(--paper); box-shadow: 0 30px 100px rgba(24,60,52,.25); }
+.subscription-dialog::backdrop { background: rgba(16,39,34,.58); backdrop-filter: blur(5px); }
+.subscription-dialog form { padding: 27px; }
+.subscription-heading { display: flex; justify-content: space-between; gap: 25px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.subscription-heading h2 { margin: 0; font-family: "STSong", "Songti SC", serif; font-size: 29px; }
+.subscription-heading p:last-child { margin: 9px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.subscription-heading button { width: 38px; height: 38px; flex: 0 0 auto; border: 1px solid var(--line); color: var(--ink); background: transparent; font-size: 24px; cursor: pointer; }
+.subscription-dialog fieldset { margin: 19px 0 0; border: 0; padding: 0; }
+.subscription-dialog legend, .keyword-field > span, .subscription-options label > span { margin-bottom: 9px; color: var(--muted); font-size: 10px; font-weight: 800; }
+.choice-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.choice-grid label, .notify-choice { display: flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 10px; border: 1px solid var(--line); background: var(--white); font-size: 10px; cursor: pointer; }
+.choice-grid input, .notify-choice input { accent-color: var(--ink); }
+.keyword-field { display: block; margin-top: 19px; }
+.keyword-field > span { display: block; }
+.keyword-field input, .subscription-options select { width: 100%; min-height: 43px; border: 1px solid var(--line); border-radius: 3px; padding: 0 12px; color: var(--ink); background: var(--white); outline: 0; }
+.keyword-field input:focus, .subscription-options select:focus { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(24,60,52,.08); }
+.subscription-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 19px; }
+.subscription-options label > span { display: block; }
+.notify-choice { align-self: end; }
+.subscription-message { min-height: 17px; margin: 13px 0 0; color: #a24838; font-size: 10px; }
+.subscription-dialog-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 17px; padding-top: 17px; border-top: 1px solid var(--line); }
+
 footer { min-height: 105px; padding: 25px max(5vw, 24px); display: grid; grid-template-columns: 1fr 2fr 1fr; align-items: center; gap: 30px; color: #b8c6c1; background: var(--ink); font-size: 10px; }
 footer p:nth-child(2) { text-align: center; }
 footer p:last-child { text-align: right; }
@@ -204,6 +238,11 @@ footer p:last-child { text-align: right; }
   .news-data { grid-column: 2; display: flex; align-items: baseline; gap: 6px; text-align: left; }
   .news-data strong { font-size: 17px; }
   .sidebar { grid-template-columns: 1fr; }
+  .choice-grid { grid-template-columns: repeat(2, 1fr); }
+  .subscription-options { grid-template-columns: 1fr; }
+  .subscription-dialog form { padding: 20px 16px; }
+  .subscription-dialog-actions { flex-direction: column-reverse; }
+  .subscription-dialog-actions .button { width: 100%; }
   footer { grid-template-columns: 1fr; text-align: center; }
   footer p:nth-child(2), footer p:last-child { text-align: center; }
   .footer-brand { justify-content: center; }

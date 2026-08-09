@@ -280,7 +280,9 @@ const state = {
   pollCount: 0,
   pollTimer: null,
   usingFallback: false,
-  focusCity: ""
+  focusCity: "",
+  subscription: null,
+  reminders: []
 };
 
 const els = {
@@ -297,6 +299,16 @@ const els = {
   sourceHealth: document.querySelector("#source-health"),
   heroEvents: document.querySelector("#hero-events"),
   refreshButton: document.querySelector("#refresh-button"),
+  subscribeButton: document.querySelector("#subscribe-button"),
+  manageSubscription: document.querySelector("#manage-subscription"),
+  markRemindersRead: document.querySelector("#mark-reminders-read"),
+  reminderCount: document.querySelector("#reminder-count"),
+  reminderStatus: document.querySelector("#reminder-status"),
+  reminderList: document.querySelector("#reminder-list"),
+  subscriptionDialog: document.querySelector("#subscription-dialog"),
+  subscriptionForm: document.querySelector("#subscription-form"),
+  subscriptionMessage: document.querySelector("#subscription-message"),
+  deleteSubscription: document.querySelector("#delete-subscription"),
   toast: document.querySelector("#toast"),
   headerStatus: document.querySelector("#header-status"),
   statusDot: document.querySelector(".status-dot")
@@ -394,6 +406,8 @@ function renderNews() {
             ${item.city ? `<span class="tag accent">${escapeHtml(item.city)}</span>` : ""}
             <span class="tag">${escapeHtml(trackForItem(item))}</span>
             <span class="tag">${escapeHtml(item.type)}</span>
+            ${item.versionCount > 1 ? `<span class="tag accent">已更新 v${item.versionCount}</span>` : ""}
+            ${item.mirrorCount > 1 ? `<span class="tag">${item.mirrorCount} 个官方来源</span>` : ""}
             <time datetime="${escapeHtml(item.publishedAt || "")}">${formatPublished(item.publishedAt)}</time>
           </div>
           <h3><a href="${safeUrl(item.articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a></h3>
@@ -514,10 +528,147 @@ function showToast(message) {
   showToast.timer = window.setTimeout(() => els.toast.classList.remove("show"), 3200);
 }
 
-async function request(path) {
-  const response = await fetch(`${API_BASE}${path}`, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`API ${response.status}`);
-  return response.json();
+async function request(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `API ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+function storedSubscription() {
+  try {
+    const value = JSON.parse(localStorage.getItem("gongkao-subscription") || "null");
+    return value?.subscriptionId && value?.editToken ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function subscriptionHeaders() {
+  const credential = storedSubscription();
+  return credential ? { "X-Subscription-Token": credential.editToken } : {};
+}
+
+function reminderTypeLabel(type) {
+  return ({ new: "新公告", updated: "公告已更新", deadline: "报名即将截止" })[type] || "提醒";
+}
+
+function renderReminders() {
+  els.reminderCount.textContent = `${state.reminders.length} 条`;
+  els.markRemindersRead.hidden = !state.reminders.length;
+  if (!state.subscription) {
+    els.reminderStatus.textContent = "尚未设置订阅，可按城市、招录方向和关键词精准提醒。";
+    els.reminderList.innerHTML = "";
+    els.manageSubscription.textContent = "设置订阅";
+    return;
+  }
+  els.manageSubscription.textContent = "修改订阅";
+  els.reminderStatus.textContent = state.reminders.length ? "发现与你订阅条件匹配的新动态。" : "订阅运行正常，当前没有未读提醒。";
+  els.reminderList.innerHTML = state.reminders.slice(0, 6).map((reminder) => {
+    const item = reminder.item || {};
+    const detail = reminder.eventType === "deadline"
+      ? `${formatPublished(item.registrationEnd)} 截止`
+      : reminder.eventType === "updated" && reminder.changeFields?.length
+        ? `变更：${reminder.changeFields.map((field) => ({ title: "标题", summary: "公告内容", registrationStart: "报名开始", registrationEnd: "报名截止", examDate: "考试日期", recruitmentCount: "招录人数" })[field] || field).join("、")}`
+        : formatPublished(reminder.eventAt);
+    return `<article class="reminder-item ${escapeHtml(reminder.eventType)}"><a href="${safeUrl(item.articleUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a><span>${reminderTypeLabel(reminder.eventType)} · ${escapeHtml(detail)}</span></article>`;
+  }).join("");
+}
+
+function maybeShowBrowserNotifications(reminders) {
+  if (localStorage.getItem("gongkao-browser-notifications") !== "1" || !("Notification" in window) || Notification.permission !== "granted") return;
+  const notified = new Set(JSON.parse(sessionStorage.getItem("gongkao-notified-events") || "[]"));
+  for (const reminder of reminders.slice(0, 3)) {
+    if (notified.has(reminder.eventKey)) continue;
+    const notification = new Notification(reminderTypeLabel(reminder.eventType), { body: reminder.item?.title || "公考雷达发现一条新动态", tag: reminder.eventKey });
+    notification.onclick = () => window.open(reminder.item?.articleUrl || location.href, "_blank", "noopener");
+    notified.add(reminder.eventKey);
+  }
+  sessionStorage.setItem("gongkao-notified-events", JSON.stringify([...notified].slice(-100)));
+}
+
+async function loadSubscription() {
+  const credential = storedSubscription();
+  if (!credential || state.usingFallback) {
+    state.subscription = null;
+    state.reminders = [];
+    renderReminders();
+    return;
+  }
+  try {
+    const [subscription, reminders] = await Promise.all([
+      request(`/api/subscriptions/${encodeURIComponent(credential.subscriptionId)}`, { headers: subscriptionHeaders() }),
+      request(`/api/subscriptions/${encodeURIComponent(credential.subscriptionId)}/reminders`, { headers: subscriptionHeaders() })
+    ]);
+    state.subscription = subscription;
+    state.reminders = reminders.items || [];
+    renderReminders();
+    maybeShowBrowserNotifications(state.reminders);
+  } catch (error) {
+    if (error.status === 401) localStorage.removeItem("gongkao-subscription");
+    state.subscription = null;
+    state.reminders = [];
+    renderReminders();
+  }
+}
+
+function openSubscriptionDialog() {
+  const form = els.subscriptionForm;
+  form.reset();
+  const filters = state.subscription?.filters;
+  for (const input of form.querySelectorAll('input[name="cities"], input[name="tracks"], input[name="eventTypes"]')) {
+    const defaults = input.name === "eventTypes" && !filters;
+    input.checked = defaults || Boolean(filters?.[input.name]?.includes(input.value));
+  }
+  form.elements.keywords.value = filters?.keywords?.join("，") || "";
+  form.elements.deadlineDays.value = String(filters?.deadlineDays || 3);
+  form.elements.browserNotifications.checked = localStorage.getItem("gongkao-browser-notifications") === "1";
+  els.deleteSubscription.hidden = !state.subscription;
+  els.subscriptionMessage.textContent = "";
+  els.subscriptionDialog.showModal();
+}
+
+function subscriptionPayload() {
+  const data = new FormData(els.subscriptionForm);
+  return {
+    cities: data.getAll("cities"),
+    tracks: data.getAll("tracks"),
+    eventTypes: data.getAll("eventTypes"),
+    keywords: String(data.get("keywords") || "").split(/[，,]+/).map((value) => value.trim()).filter(Boolean),
+    deadlineDays: Number(data.get("deadlineDays")) || 3
+  };
+}
+
+async function saveSubscription() {
+  const payload = subscriptionPayload();
+  if (!payload.eventTypes.length) {
+    els.subscriptionMessage.textContent = "请至少选择一种提醒类型。";
+    return;
+  }
+  const wantsNotifications = els.subscriptionForm.elements.browserNotifications.checked;
+  if (wantsNotifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission();
+  localStorage.setItem("gongkao-browser-notifications", wantsNotifications && "Notification" in window && Notification.permission === "granted" ? "1" : "0");
+  try {
+    const credential = storedSubscription();
+    if (credential) {
+      await request(`/api/subscriptions/${encodeURIComponent(credential.subscriptionId)}`, { method: "PUT", headers: subscriptionHeaders(), body: JSON.stringify(payload) });
+    } else {
+      const created = await request("/api/subscriptions", { method: "POST", body: JSON.stringify(payload) });
+      localStorage.setItem("gongkao-subscription", JSON.stringify({ subscriptionId: created.subscriptionId, editToken: created.editToken }));
+    }
+    els.subscriptionDialog.close();
+    showToast("订阅已保存");
+    await loadSubscription();
+  } catch (error) {
+    els.subscriptionMessage.textContent = error.message;
+  }
 }
 
 async function loadData({ notify = false, background = false } = {}) {
@@ -562,6 +713,7 @@ async function loadData({ notify = false, background = false } = {}) {
   renderHeroEvents();
   renderSources();
   updateStats();
+  await loadSubscription();
 
   window.clearTimeout(state.pollTimer);
   if (state.collecting && state.pollCount < 12) {
@@ -593,5 +745,41 @@ els.loadMore.addEventListener("click", () => {
 });
 
 els.refreshButton.addEventListener("click", () => loadData({ notify: true }));
+els.subscribeButton.addEventListener("click", openSubscriptionDialog);
+els.manageSubscription.addEventListener("click", openSubscriptionDialog);
+document.querySelector("#close-subscription").addEventListener("click", () => els.subscriptionDialog.close());
+els.subscriptionForm.addEventListener("submit", (event) => { event.preventDefault(); saveSubscription(); });
+els.markRemindersRead.addEventListener("click", async () => {
+  const credential = storedSubscription();
+  if (!credential || !state.reminders.length) return;
+  try {
+    await request(`/api/subscriptions/${encodeURIComponent(credential.subscriptionId)}/seen`, {
+      method: "POST",
+      headers: subscriptionHeaders(),
+      body: JSON.stringify({ eventKeys: state.reminders.map((item) => item.eventKey) })
+    });
+    state.reminders = [];
+    renderReminders();
+    showToast("提醒已标记为已读");
+  } catch {
+    showToast("暂时无法更新提醒状态");
+  }
+});
+els.deleteSubscription.addEventListener("click", async () => {
+  const credential = storedSubscription();
+  if (!credential || !confirm("删除当前订阅？之后可以重新设置。")) return;
+  try {
+    await request(`/api/subscriptions/${encodeURIComponent(credential.subscriptionId)}`, { method: "DELETE", headers: subscriptionHeaders() });
+    localStorage.removeItem("gongkao-subscription");
+    localStorage.removeItem("gongkao-browser-notifications");
+    state.subscription = null;
+    state.reminders = [];
+    els.subscriptionDialog.close();
+    renderReminders();
+    showToast("订阅已删除");
+  } catch {
+    showToast("暂时无法删除订阅");
+  }
+});
 
 loadData();
